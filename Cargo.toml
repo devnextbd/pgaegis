@@ -2,6 +2,7 @@
 name = "pgaegis"
 version = "1.0.0"
 edition = "2021"
+rust-version = "1.100.0"
 authors = ["pgaegis Contributors"]
 description = "Native PostgreSQL production lifecycle and HA orchestration CLI"
 license = "MIT"

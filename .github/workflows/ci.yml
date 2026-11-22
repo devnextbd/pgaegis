@@ -1,23 +1,69 @@
 name: CI
+
 on:
   push:
   pull_request:
-permissions: {contents: read}
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "26.13.1"
+
 jobs:
   rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with: {components: clippy}
-      - run: bash tests/cert/rust-quality.sh
-      - run: find . -type f -name "*.sh" -print0 | xargs -0 -n1 bash -n
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js LTS
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          check-latest: true
+          package-manager-cache: false
+
+      - name: Setup Rust 1.100.0
+        uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          components: clippy
+
+      - name: Toolchain versions
+        run: |
+          node --version
+          rustc --version
+          cargo --version
+          cargo clippy --version
+
+      - name: Rust quality gates
+        run: bash tests/cert/rust-quality.sh
+
+      - name: Shell syntax
+        run: find . -type f -name "*.sh" -print0 | xargs -0 -n1 bash -n
+
   debian13-package:
     runs-on: ubuntu-latest
     needs: rust
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
-      - run: bash tests/package/debian13-lifecycle.sh
-      - run: bash tests/cert/monitoring-faults.sh
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js LTS
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          check-latest: true
+          package-manager-cache: false
+
+      - name: Setup Rust 1.100.0
+        uses: dtolnay/rust-toolchain@1.100.0
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Debian 13 package lifecycle
+        run: bash tests/package/debian13-lifecycle.sh
+
+      - name: Monitoring fault tests
+        run: bash tests/cert/monitoring-faults.sh
