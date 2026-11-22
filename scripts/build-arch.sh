@@ -35,7 +35,12 @@ esac
 mkdir -p "$ROOT/dist"
 
 WORK="$(mktemp -d)"
+CONTAINER_ID=""
+
 cleanup() {
+  if [[ -n "$CONTAINER_ID" ]]; then
+    docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true
+  fi
   rm -rf "$WORK"
 }
 trap cleanup EXIT HUP INT TERM
@@ -127,17 +132,34 @@ EOF_PKGBUILD
 # .pkg.tar.zst archive. makepkg generates the current package metadata
 # (.PKGINFO, .BUILDINFO, .MTREE and .INSTALL) in the format pacman expects.
 #
-# CARCH is intentionally overridden because release builds package a prebuilt
-# static binary for both x86_64 and aarch64; no compilation happens here.
-docker run --rm \
-  --mount "type=bind,source=${WORK},target=/build" \
+# IMPORTANT:
+# Do not bind-mount $WORK into the build container and chown it there.
+# A container-side chown on a bind mount changes ownership on the GitHub
+# runner too, which can leave the runner unable to read/delete the result.
+#
+# Instead:
+#   1. start an isolated Arch container,
+#   2. copy build inputs into its own filesystem,
+#   3. build there as a dedicated non-root user,
+#   4. copy only the finished package back to the host.
+#
+# docker cp creates files copied back to the local machine with the ownership
+# of the local user invoking docker cp (unless archive mode is explicitly used).
+CONTAINER_ID="$(
+  docker run -d \
+    "$ARCH_BUILD_IMAGE" \
+    sleep infinity
+)"
+
+docker exec "$CONTAINER_ID" mkdir -p /build
+docker cp "$WORK/." "$CONTAINER_ID:/build/"
+
+docker exec \
   -e "PGAEGIS_PACKAGE_ARCH=${ARCH}" \
-  "$ARCH_BUILD_IMAGE" \
+  "$CONTAINER_ID" \
   bash -euxo pipefail -c '
     pacman -Syu --noconfirm --needed base-devel shadow
 
-    # makepkg refuses to run as root. The built-in nobody account in the
-    # Arch container is locked/expired, so create a fresh build account.
     useradd \
       --create-home \
       --home-dir /tmp/pgaegis-makepkg \
@@ -152,6 +174,7 @@ docker run --rm \
         CARCH="${PGAEGIS_PACKAGE_ARCH}" \
         PKGDEST=/build/out \
         PACKAGER="pgaegis Contributors <noreply@github.com>" \
+        LC_ALL=C \
         bash -lc "
           set -e
           cd /build
@@ -159,7 +182,16 @@ docker run --rm \
         "
   '
 
-EXPECTED="$OUTDIR/pgaegis-${VERSION}-1-${ARCH}.pkg.tar.zst"
+EXPECTED_BASENAME="pgaegis-${VERSION}-1-${ARCH}.pkg.tar.zst"
+EXPECTED="$OUTDIR/$EXPECTED_BASENAME"
+
+docker cp \
+  "$CONTAINER_ID:/build/out/$EXPECTED_BASENAME" \
+  "$EXPECTED"
+
+docker rm -f "$CONTAINER_ID" >/dev/null
+CONTAINER_ID=""
+
 
 if [[ ! -f "$EXPECTED" ]]; then
   echo "makepkg did not create expected package: $EXPECTED" >&2
