@@ -96,7 +96,7 @@ docker run --rm \
     pgaegis version | grep -qx "pgaegis ${PREVIOUS_VERSION}"
 
     # Verify user configuration survives an in-place package upgrade.
-    echo "CUSTOM_MARKER=preserve-me" >> /etc/pgaegis/pgaegis.conf
+    printf '\n%s\n' "CUSTOM_MARKER=preserve-me" >> /etc/pgaegis/pgaegis.conf
 
     apt-get install -y "$NEW_PACKAGE"
 
