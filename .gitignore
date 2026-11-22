@@ -1,0 +1,107 @@
+# Rust build output
+/target/
+**/target/
+
+# Release/build artifacts
+/dist/
+/build/
+/out/
+/artifacts/
+/packages/
+*.deb
+*.rpm
+*.pkg.tar.zst
+*.tar.gz
+*.zip
+
+# Environment and local configuration
+.env
+.env.*
+!.env.example
+*.local
+*.local.*
+config.local.*
+pgaegis.local.*
+/etc/pgaegis/
+/var/lib/pgaegis/
+/var/log/pgaegis/
+
+# Secrets and credentials
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
+*.csr
+*.jks
+*.keystore
+*.secret
+*.secrets
+secrets/
+credentials/
+private/
+
+# Database dumps and backups
+*.sql
+*.dump
+*.backup
+*.bak
+*.pgdump
+*.tar
+backups/
+backup/
+restore/
+restore-drill/
+
+# Runtime state, evidence, and generated reports
+state/
+logs/
+log/
+tmp/
+temp/
+.cache/
+coverage/
+certification/
+evidence/
+reports/
+test-results/
+junit/
+*.log
+*.pid
+*.pid.lock
+
+# Docker/local lab overrides
+docker-compose.override.yml
+docker-compose.local.yml
+compose.override.yml
+compose.local.yml
+.env.docker
+tests/**/runtime/
+tests/**/data/
+tests/**/evidence/
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# OS junk
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Misc generated files
+*.tmp
+*.temp
+*.cache
+*.orig
+*.rej
+
+# Keep Cargo.lock for reproducible application builds
+!Cargo.lock

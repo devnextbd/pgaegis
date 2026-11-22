@@ -1,0 +1,10 @@
+Package: pgaegis
+Version: 1.0.0
+Section: database
+Priority: optional
+Architecture: amd64
+Maintainer: pgaegis Contributors
+Depends: libc6, ca-certificates, curl, openssl
+Suggests: postgresql-client-18, patroni, etcd-client, pgbackrest, haproxy, pgbouncer
+Description: Native PostgreSQL production lifecycle and HA orchestration CLI
+ pgaegis orchestrates PostgreSQL, Patroni, etcd, pgBackRest, HAProxy and PgBouncer.

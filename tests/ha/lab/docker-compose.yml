@@ -1,0 +1,14 @@
+services:
+  etcd1:
+    image: ${ETCD_IMAGE:-gcr.io/etcd-development/etcd:v3.7.4}
+    command: ["/usr/local/bin/etcd","--name=etcd1","--data-dir=/etcd-data","--listen-client-urls=http://0.0.0.0:2379","--advertise-client-urls=http://etcd1:2379","--listen-peer-urls=http://0.0.0.0:2380","--initial-advertise-peer-urls=http://etcd1:2380","--initial-cluster=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380","--initial-cluster-state=new","--initial-cluster-token=pgaegis-lab"]
+  etcd2:
+    image: ${ETCD_IMAGE:-gcr.io/etcd-development/etcd:v3.7.4}
+    command: ["/usr/local/bin/etcd","--name=etcd2","--data-dir=/etcd-data","--listen-client-urls=http://0.0.0.0:2379","--advertise-client-urls=http://etcd2:2379","--listen-peer-urls=http://0.0.0.0:2380","--initial-advertise-peer-urls=http://etcd2:2380","--initial-cluster=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380","--initial-cluster-state=new","--initial-cluster-token=pgaegis-lab"]
+  etcd3:
+    image: ${ETCD_IMAGE:-gcr.io/etcd-development/etcd:v3.7.4}
+    command: ["/usr/local/bin/etcd","--name=etcd3","--data-dir=/etcd-data","--listen-client-urls=http://0.0.0.0:2379","--advertise-client-urls=http://etcd3:2379","--listen-peer-urls=http://0.0.0.0:2380","--initial-advertise-peer-urls=http://etcd3:2380","--initial-cluster=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380","--initial-cluster-state=new","--initial-cluster-token=pgaegis-lab"]
+  pg1: {build: {context: ., dockerfile: Dockerfile.pg}, environment: {NODE_NAME: pg1}, depends_on: [etcd1,etcd2,etcd3]}
+  pg2: {build: {context: ., dockerfile: Dockerfile.pg}, environment: {NODE_NAME: pg2}, depends_on: [etcd1,etcd2,etcd3]}
+  pg3: {build: {context: ., dockerfile: Dockerfile.pg}, environment: {NODE_NAME: pg3}, depends_on: [etcd1,etcd2,etcd3]}
+  router: {build: {context: ., dockerfile: Dockerfile.router}, depends_on: [pg1,pg2,pg3]}

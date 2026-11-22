@@ -1,0 +1,7 @@
+FROM debian:13
+RUN apt-get update && apt-get install -y haproxy pgbouncer postgresql-client curl && rm -rf /var/lib/apt/lists/*
+COPY haproxy.cfg /etc/haproxy/haproxy.cfg
+COPY pgbouncer.ini /etc/pgbouncer/pgbouncer.ini
+COPY router-entrypoint.sh /usr/local/bin/router-entrypoint
+RUN chmod +x /usr/local/bin/router-entrypoint && printf '"postgres" "postgres"\n' >/etc/pgbouncer/userlist.txt
+ENTRYPOINT ["/usr/local/bin/router-entrypoint"]

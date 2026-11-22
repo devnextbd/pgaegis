@@ -1,0 +1,26 @@
+# pgaegis configuration
+CLUSTER_NAME=production
+PATRONI_CONFIG=/etc/patroni/patroni.yml
+PGBACKREST_STANZA=main
+MAX_REPLICATION_LAG_BYTES=67108864
+BACKUP_MAX_AGE_HOURS=26
+WRITER_HOST=127.0.0.1
+WRITER_PORT=6432
+ALERT_WEBHOOK=
+FENCE_PUBLIC_KEY=/etc/pgaegis/fencing.pub
+CERTIFICATION_DIR=/var/lib/pgaegis/certification
+ETCD_ENDPOINTS=https://etcd1:2379,https://etcd2:2379,https://etcd3:2379
+ETCD_CA=/etc/etcd/tls/ca.crt
+ETCD_CERT=/etc/etcd/tls/patroni.crt
+ETCD_KEY=/etc/etcd/tls/patroni.key
+MONITOR_DSN=
+RTO_TARGET_SECONDS=60
+RPO_MAX_LOST_ROWS=0
+
+# Production certification evidence must be recent.
+CERT_EVIDENCE_MAX_AGE_HOURS=168
+
+PGDATA=/var/lib/postgresql/18/main
+DISK_USAGE_MAX_PERCENT=85
+MAX_SLOT_RETAINED_WAL_BYTES=2147483648
+CERTIFICATE_MIN_VALID_DAYS=14

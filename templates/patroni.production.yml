@@ -1,0 +1,94 @@
+# Production template. Replace every ${...} value before use.
+scope: ${CLUSTER_NAME}
+namespace: /service/
+name: ${NODE_NAME}
+
+restapi:
+  listen: 0.0.0.0:8008
+  connect_address: ${NODE_IP}:8008
+  cafile: /etc/patroni/tls/ca.crt
+  certfile: /etc/patroni/tls/node.crt
+  keyfile: /etc/patroni/tls/node.key
+  verify_client: required
+  authentication:
+    username: ${PATRONI_API_USER}
+    password: ${PATRONI_API_PASSWORD}
+
+ctl:
+  cacert: /etc/patroni/tls/ca.crt
+  certfile: /etc/patroni/tls/admin.crt
+  keyfile: /etc/patroni/tls/admin.key
+  authentication:
+    username: ${PATRONI_API_USER}
+    password: ${PATRONI_API_PASSWORD}
+
+etcd3:
+  hosts: ${ETCD_ENDPOINTS}
+  protocol: https
+  cacert: /etc/etcd/tls/ca.crt
+  cert: /etc/etcd/tls/patroni.crt
+  key: /etc/etcd/tls/patroni.key
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    primary_start_timeout: 30
+    primary_stop_timeout: 30
+    maximum_lag_on_failover: 67108864
+    maximum_lag_on_syncnode: 33554432
+    check_timeline: true
+    failsafe_mode: true
+    synchronous_mode: true
+    synchronous_mode_strict: true
+    synchronous_node_count: 1
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        wal_level: replica
+        hot_standby: 'on'
+        max_wal_senders: 16
+        max_replication_slots: 16
+        wal_log_hints: 'on'
+        full_page_writes: 'on'
+        archive_mode: 'on'
+        archive_command: 'pgbackrest --stanza=${PGBACKREST_STANZA} archive-push %p'
+        archive_timeout: 60s
+        password_encryption: scram-sha-256
+        ssl: 'on'
+        ssl_ca_file: /etc/postgresql/tls/ca.crt
+        ssl_cert_file: /etc/postgresql/tls/server.crt
+        ssl_key_file: /etc/postgresql/tls/server.key
+  pg_hba:
+    - local all all peer
+    - hostssl all all ${CLIENT_CIDR} scram-sha-256 clientcert=verify-ca
+    - hostssl replication replicator ${REPLICATION_CIDR} scram-sha-256 clientcert=verify-ca
+
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: ${NODE_IP}:5432
+  data_dir: ${PGDATA}
+  bin_dir: /usr/lib/postgresql/18/bin
+  authentication:
+    superuser:
+      username: postgres
+      password: ${POSTGRES_PASSWORD}
+    replication:
+      username: replicator
+      password: ${REPLICATION_PASSWORD}
+    rewind:
+      username: rewind_user
+      password: ${REWIND_PASSWORD}
+
+watchdog:
+  mode: required
+  device: /dev/watchdog
+  safety_margin: 5
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

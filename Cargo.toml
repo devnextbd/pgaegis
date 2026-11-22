@@ -1,0 +1,13 @@
+[package]
+name = "pgaegis"
+version = "1.0.0"
+edition = "2021"
+authors = ["pgaegis Contributors"]
+description = "Native PostgreSQL production lifecycle and HA orchestration CLI"
+license = "MIT"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

@@ -1,0 +1,110 @@
+{
+  "pgaegis_version": "1.0.0",
+  "generated_on": "2026-11-22",
+  "local_runtime": "Debian 13",
+  "branding": {
+    "cli": "pgaegis",
+    "full_form": "PostgreSQL Availability, Governance, Engineering, Integrity & Safety",
+    "meaning": "Aegis = shield / protection / safeguard",
+    "legacy_name_references": "PASS (legacy product names absent from source/package/docs)"
+  },
+  "verification": {
+    "shell_syntax": {
+      "status": "PASS",
+      "files_checked": 25
+    },
+    "posix_installer_syntax": {
+      "status": "PASS"
+    },
+    "cargo_toml_and_lock_parse": {
+      "status": "PASS"
+    },
+    "version_consistency": {
+      "status": "PASS",
+      "version": "1.0.0"
+    },
+    "github_actions_yaml_parse": {
+      "status": "PASS"
+    },
+    "docker_compose_yaml_parse": {
+      "status": "PASS"
+    },
+    "rendered_patroni_yaml_parse": {
+      "status": "PASS"
+    },
+    "rust_source_delimiter_balance": {
+      "status": "NOT_RUN",
+      "reason": "No Rust parser/compiler is available in this execution runtime. Shell/YAML/TOML/static file checks passed, but Rust syntax/semantics must be proven by the mandatory cargo build/test/clippy CI gates."
+    },
+    "terminal_ui_source": {
+      "status": "PASS",
+      "modules": [
+        "ui",
+        "database",
+        "users",
+        "tables",
+        "doctor",
+        "extensions",
+        "ha",
+        "backup",
+        "routing",
+        "system",
+        "certify"
+      ]
+    },
+    "fencing_signature_positive_test": {
+      "status": "PASS",
+      "algorithm": "RSA-3072/SHA-256"
+    },
+    "fencing_tamper_rejection_test": {
+      "status": "PASS"
+    },
+    "rust_compile": {
+      "status": "NOT_RUN",
+      "reason": "Rust/Cargo toolchain is unavailable in this execution runtime; apt repository refresh timed out. Mandatory CI build gate remains enabled."
+    },
+    "rust_clippy": {
+      "status": "NOT_RUN",
+      "reason": "Mandatory GitHub Actions gate: cargo clippy --all-targets -- -D warnings"
+    },
+    "rust_unit_tests": {
+      "status": "NOT_RUN",
+      "reason": "Mandatory GitHub Actions gate: cargo test --all-targets"
+    },
+    "docker_ha_failover_lab": {
+      "status": "NOT_RUN",
+      "reason": "Requires Docker/disposable multi-node lab; blocking CI job included"
+    },
+    "independent_pitr_lab": {
+      "status": "NOT_RUN",
+      "reason": "Requires independent disposable restore host/container; blocking CI job included"
+    },
+    "disk_wal_full_fault_lab": {
+      "status": "NOT_RUN",
+      "reason": "Requires privileged disposable runner; blocking CI job included"
+    },
+    "monitoring_fault_lab": {
+      "status": "NOT_RUN",
+      "reason": "Requires built pgaegis binary and disposable fault environment; blocking CI job included"
+    },
+    "real_watchdog_bmc_fencing": {
+      "status": "NOT_RUN",
+      "reason": "Requires real staging hardware/VM watchdog and independent BMC/PDU/Redfish/IPMI fencing controller"
+    },
+    "universal_packaging_source": {
+      "status": "PASS",
+      "formats": [
+        "deb",
+        "rpm",
+        "pkg.tar.zst",
+        "tar.gz"
+      ],
+      "architectures": [
+        "x86_64",
+        "aarch64"
+      ],
+      "note": "source/static validation only; package build/install execution remains CI-gated"
+    }
+  },
+  "certification_status": "NOT_PRODUCTION_CERTIFIED_UNTIL_ALL_MANDATORY_RUNTIME_GATES_PASS"
+}

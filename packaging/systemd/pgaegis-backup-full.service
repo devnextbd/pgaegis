@@ -1,0 +1,12 @@
+[Unit]
+Description=pgaegis weekly pgBackRest full backup
+After=network-online.target patroni.service
+OnFailure=pgaegis-monitor.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/pgaegis backup full
+User=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true

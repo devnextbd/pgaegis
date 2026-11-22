@@ -1,0 +1,9 @@
+FROM debian:13
+RUN apt-get update && apt-get install -y curl ca-certificates gnupg util-linux e2fsprogs && \
+    install -d /usr/share/postgresql-common/pgdg && \
+    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc && \
+    echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt trixie-pgdg main" > /etc/apt/sources.list.d/pgdg.list && \
+    apt-get update && apt-get install -y postgresql-18 postgresql-client-18 pgbackrest && rm -rf /var/lib/apt/lists/*
+COPY pitr-restore-drill.sh /usr/local/bin/pitr-restore-drill
+COPY storage-faults.sh /usr/local/bin/storage-faults
+RUN chmod +x /usr/local/bin/pitr-restore-drill /usr/local/bin/storage-faults
