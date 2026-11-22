@@ -22,13 +22,29 @@ NEW="pgaegis-${CURRENT_VERSION}-1-x86_64.pkg.tar.zst"
 
 # Fast host-side structure check. Metadata must be at the archive root, not
 # under paths such as ./.PKGINFO.
+#
+# Avoid `tar | grep -q` under pipefail: grep may exit early on a match and
+# cause tar to fail with SIGPIPE/"stdout: write error".
 for package in "$ROOT/dist/$OLD" "$ROOT/dist/$NEW"; do
+  package_list="$(mktemp)"
+
+  if ! tar --zstd -tf "$package" > "$package_list"; then
+    rm -f "$package_list"
+    echo "Invalid Arch package $(basename "$package"): archive cannot be read" >&2
+    exit 1
+  fi
+
   for metadata in .PKGINFO .BUILDINFO .MTREE .INSTALL; do
-    tar --zstd -tf "$package" | grep -Fxq "$metadata" || {
+    if ! grep -Fx "$metadata" "$package_list" >/dev/null; then
       echo "Invalid Arch package $(basename "$package"): missing $metadata at archive root" >&2
+      echo "archive root entries:" >&2
+      sed -n '1,80p' "$package_list" >&2
+      rm -f "$package_list"
       exit 1
-    }
+    fi
   done
+
+  rm -f "$package_list"
 done
 
 mkdir -p "$EVIDENCE_DIR"

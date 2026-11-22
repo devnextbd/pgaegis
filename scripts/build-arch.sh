@@ -201,17 +201,30 @@ if [[ ! -f "$EXPECTED" ]]; then
 fi
 
 # Verify mandatory modern ALPM metadata is present at the archive root.
-for metadata in .PKGINFO .BUILDINFO .MTREE; do
-  if ! tar --zstd -tf "$EXPECTED" | grep -Fxq "$metadata"; then
+#
+# Do NOT use:
+#   tar ... | grep -q ...
+# while `set -o pipefail` is enabled. grep -q exits immediately after the
+# first match, closes the pipe, and GNU tar can then receive SIGPIPE and print
+# "stdout: write error". pipefail turns that successful match into a failing
+# pipeline and produces a false "missing metadata" error.
+#
+# Generate the archive listing once, then inspect the completed file.
+ARCHIVE_LIST="$WORK/archive-contents.txt"
+
+if ! tar --zstd -tf "$EXPECTED" > "$ARCHIVE_LIST"; then
+  echo "invalid Arch package: unable to read package archive" >&2
+  exit 1
+fi
+
+for metadata in .PKGINFO .BUILDINFO .MTREE .INSTALL; do
+  if ! grep -Fx "$metadata" "$ARCHIVE_LIST" >/dev/null; then
     echo "invalid Arch package: missing root metadata $metadata" >&2
+    echo "archive root entries:" >&2
+    sed -n '1,80p' "$ARCHIVE_LIST" >&2
     exit 1
   fi
 done
-
-if ! tar --zstd -tf "$EXPECTED" | grep -Fxq ".INSTALL"; then
-  echo "invalid Arch package: missing root install script .INSTALL" >&2
-  exit 1
-fi
 
 OUT="$ROOT/dist/pgaegis-${VERSION}-1-${ARCH}.pkg.tar.zst"
 cp -f "$EXPECTED" "$OUT"
