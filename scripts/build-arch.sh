@@ -134,21 +134,29 @@ docker run --rm \
   -e "PGAEGIS_PACKAGE_ARCH=${ARCH}" \
   "$ARCH_BUILD_IMAGE" \
   bash -euxo pipefail -c '
-    pacman -Syu --noconfirm --needed base-devel
+    pacman -Syu --noconfirm --needed base-devel shadow
 
-    chmod -R a+rwX /build
+    # makepkg refuses to run as root. The built-in nobody account in the
+    # Arch container is locked/expired, so create a fresh build account.
+    useradd \
+      --create-home \
+      --home-dir /tmp/pgaegis-makepkg \
+      --shell /bin/bash \
+      pgaegis-build
 
-    install -d -m 0755 -o nobody -g nobody /tmp/pgaegis-makepkg
+    chown -R pgaegis-build:pgaegis-build /build
 
-    su -s /bin/bash nobody -c "
-      set -e
-      export HOME=/tmp/pgaegis-makepkg
-      export CARCH=\"${PGAEGIS_PACKAGE_ARCH}\"
-      export PKGDEST=/build/out
-      export PACKAGER=\"pgaegis Contributors <noreply@github.com>\"
-      cd /build
-      makepkg --force --noconfirm --nodeps
-    "
+    runuser -u pgaegis-build -- \
+      env \
+        HOME=/tmp/pgaegis-makepkg \
+        CARCH="${PGAEGIS_PACKAGE_ARCH}" \
+        PKGDEST=/build/out \
+        PACKAGER="pgaegis Contributors <noreply@github.com>" \
+        bash -lc "
+          set -e
+          cd /build
+          makepkg --force --noconfirm --nodeps
+        "
   '
 
 EXPECTED="$OUTDIR/pgaegis-${VERSION}-1-${ARCH}.pkg.tar.zst"
