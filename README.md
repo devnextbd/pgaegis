@@ -63,13 +63,13 @@ Secrets are never printed by list/check commands. Password prompts disable termi
 After release artifacts are published:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mohammadanarul/pgaegis/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/devnextbd/pgaegis/main/install.sh | sh
 ```
 
 For a pinned production release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mohammadanarul/pgaegis/main/install.sh | PGAEGIS_VERSION=1.0.0 sh
+curl -fsSL https://raw.githubusercontent.com/devnextbd/pgaegis/main/install.sh | PGAEGIS_VERSION=1.0.0 sh
 ```
 
 The installer verifies the SHA-256 manifest before installing a release package. For production, prefer a pinned version rather than automatically following `latest`.
@@ -84,7 +84,7 @@ OS/package detection:
 | Arch/Pacman | Arch, Manjaro, EndeavourOS, Garuda | `.pkg.tar.zst` |
 | Other Linux | Generic compatible Linux | `.tar.gz` fallback |
 
-Release packaging targets x86_64 and aarch64. **Production certification remains platform-specific**; the reference qualification suite in this repository is Debian 13 + PostgreSQL 18. A package being installable on another distro is not the same as that distro being production-certified.
+Release packaging targets x86_64 and aarch64. The one-command installer auto-detects the Linux family and selects the native package when available, with a static generic tarball fallback. Package lifecycle CI covers Debian 13, Ubuntu 26.04 LTS, Fedora 45, Rocky Linux 10, AlmaLinux 10, openSUSE Leap 16.1, Arch Linux, and generic Alpine Linux. PostgreSQL/HA production certification is still a separate, topology-specific qualification process; package compatibility alone is not HA certification.
 
 Check installation:
 
@@ -594,7 +594,7 @@ A release/topology is ready for review only when all required gates are PASS, in
 - Data/WAL filesystem full tests.
 - TLS/certificate/key permission audit.
 - Rust clippy/tests/release build.
-- Debian 13 package lifecycle tests.
+- Cross-distro package lifecycle tests for Debian 13, Ubuntu LTS, Fedora, Rocky Linux, AlmaLinux, openSUSE, Arch Linux, and generic Alpine Linux.
 - Monitoring fault injection and alert delivery.
 - Measured RTO/RPO within configured targets.
 

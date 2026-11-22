@@ -1,78 +1,132 @@
 name: Production Certification Lab
+
 on:
   workflow_dispatch:
   schedule:
     - cron: '30 2 * * 0'
-permissions: {contents: read}
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "26.13.1"
+
 jobs:
   rust-quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with: {components: clippy}
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          components: clippy
       - run: bash tests/cert/rust-quality.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: rust-quality-evidence
           path: tests/ha/lab/evidence/rust-quality.env
-  debian13-package:
+
+  package-lifecycle:
+    name: Package / ${{ matrix.name }}
     runs-on: ubuntu-latest
     needs: rust-quality
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: Debian 13, script: tests/package/debian13-lifecycle.sh, image: 'debian:13', pm: '', evidence: debian13-package.env}
+          - {name: Ubuntu 26.04 LTS, script: tests/package/deb-lifecycle.sh, image: 'ubuntu:26.04', pm: '', evidence: ubuntu2604-package.env}
+          - {name: Fedora 45, script: tests/package/rpm-lifecycle.sh, image: 'fedora:45', pm: dnf, evidence: fedora45-package.env}
+          - {name: Rocky Linux 10, script: tests/package/rpm-lifecycle.sh, image: 'rockylinux:10', pm: dnf, evidence: rocky10-package.env}
+          - {name: AlmaLinux 10, script: tests/package/rpm-lifecycle.sh, image: 'almalinux:10', pm: dnf, evidence: almalinux10-package.env}
+          - {name: openSUSE Leap 16.1, script: tests/package/rpm-lifecycle.sh, image: 'opensuse/leap:16.1', pm: zypper, evidence: opensuse161-package.env}
+          - {name: Arch Linux, script: tests/package/arch-lifecycle.sh, image: 'archlinux:latest', pm: '', evidence: arch-package.env}
+          - {name: Generic Linux / Alpine, script: tests/package/generic-lifecycle.sh, image: 'alpine:latest', pm: '', evidence: generic-alpine-package.env}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
-      - run: bash tests/package/debian13-lifecycle.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          name: debian13-package-evidence
-          path: tests/ha/lab/evidence/debian13-package.env
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          targets: x86_64-unknown-linux-musl
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools rpm zstd
+      - name: Run package lifecycle
+        env:
+          PGAEGIS_DEB_IMAGE: ${{ matrix.image }}
+          PGAEGIS_RPM_IMAGE: ${{ matrix.image }}
+          PGAEGIS_ARCH_IMAGE: ${{ matrix.image }}
+          PGAEGIS_GENERIC_IMAGE: ${{ matrix.image }}
+          PGAEGIS_RPM_PM: ${{ matrix.pm }}
+          PGAEGIS_EVIDENCE_NAME: ${{ matrix.evidence }}
+        run: bash "${{ matrix.script }}"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: package-${{ matrix.evidence }}
+          path: tests/ha/lab/evidence/${{ matrix.evidence }}
+
   ha-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
+      - run: cargo build --release --locked
       - run: PGAEGIS_DISPOSABLE_LAB=YES bash tests/ha/lab/run-e2e.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: ha-certification-evidence
           path: tests/ha/lab/evidence/
+
   pitr:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: bash tests/cert/run-pitr-lab.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: pitr-certification-evidence
           path: tests/cert/evidence/
+
   storage-faults:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: docker build -t pgaegis-cert -f tests/cert/Dockerfile.cert tests/cert
-      - run: mkdir -p tests/cert/evidence && docker run --rm --privileged -v "$PWD/tests/cert/evidence:/evidence" -e PGAEGIS_DISPOSABLE_VM=YES -e PGAEGIS_CERT_DIR=/evidence pgaegis-cert /usr/local/bin/storage-faults
-      - uses: actions/upload-artifact@v4
+      - run: |
+          mkdir -p tests/cert/evidence
+          docker run --rm --privileged \
+            -v "$PWD/tests/cert/evidence:/evidence" \
+            -e PGAEGIS_DISPOSABLE_VM=YES \
+            -e PGAEGIS_CERT_DIR=/evidence \
+            pgaegis-cert \
+            /usr/local/bin/storage-faults
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: storage-certification-evidence
           path: tests/cert/evidence/
+
   monitoring-faults:
     runs-on: ubuntu-latest
     needs: rust-quality
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
+      - run: cargo build --release --locked
       - run: bash tests/cert/monitoring-faults.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: monitoring-fault-evidence

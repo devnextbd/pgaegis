@@ -9,6 +9,7 @@ permissions:
 
 env:
   NODE_VERSION: "26.13.1"
+  RUST_VERSION: "1.100.0"
 
 jobs:
   rust-quality:
@@ -24,17 +25,10 @@ jobs:
           check-latest: true
           package-manager-cache: false
 
-      - name: Setup Rust 1.100.0
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: clippy
-
-      - name: Toolchain versions
-        run: |
-          node --version
-          rustc --version
-          cargo --version
-          cargo clippy --version
 
       - name: Verify release version
         run: bash scripts/check-version.sh "${GITHUB_REF_NAME#v}"
@@ -42,9 +36,54 @@ jobs:
       - name: Rust quality gates
         run: bash tests/cert/rust-quality.sh
 
-  debian13-package:
+  package-lifecycle:
+    name: Package / ${{ matrix.name }}
     runs-on: ubuntu-latest
     needs: rust-quality
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Debian 13
+            script: tests/package/debian13-lifecycle.sh
+            image: debian:13
+            pm: ""
+            evidence: debian13-package.env
+          - name: Ubuntu 26.04 LTS
+            script: tests/package/deb-lifecycle.sh
+            image: ubuntu:26.04
+            pm: ""
+            evidence: ubuntu2604-package.env
+          - name: Fedora 45
+            script: tests/package/rpm-lifecycle.sh
+            image: fedora:45
+            pm: dnf
+            evidence: fedora45-package.env
+          - name: Rocky Linux 10
+            script: tests/package/rpm-lifecycle.sh
+            image: rockylinux:10
+            pm: dnf
+            evidence: rocky10-package.env
+          - name: AlmaLinux 10
+            script: tests/package/rpm-lifecycle.sh
+            image: almalinux:10
+            pm: dnf
+            evidence: almalinux10-package.env
+          - name: openSUSE Leap 16.1
+            script: tests/package/rpm-lifecycle.sh
+            image: opensuse/leap:16.1
+            pm: zypper
+            evidence: opensuse161-package.env
+          - name: Arch Linux
+            script: tests/package/arch-lifecycle.sh
+            image: archlinux:latest
+            pm: ""
+            evidence: arch-package.env
+          - name: Generic Linux / Alpine
+            script: tests/package/generic-lifecycle.sh
+            image: alpine:latest
+            pm: ""
+            evidence: generic-alpine-package.env
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -56,41 +95,36 @@ jobs:
           check-latest: true
           package-manager-cache: false
 
-      - name: Setup Rust 1.100.0
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          targets: x86_64-unknown-linux-musl
 
-      - name: Build release binary
-        run: cargo build --release --locked
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools rpm zstd
 
-      - name: Debian 13 package lifecycle
-        run: bash tests/package/debian13-lifecycle.sh
+      - name: Run package lifecycle
+        env:
+          PGAEGIS_DEB_IMAGE: ${{ matrix.image }}
+          PGAEGIS_RPM_IMAGE: ${{ matrix.image }}
+          PGAEGIS_ARCH_IMAGE: ${{ matrix.image }}
+          PGAEGIS_GENERIC_IMAGE: ${{ matrix.image }}
+          PGAEGIS_RPM_PM: ${{ matrix.pm }}
+          PGAEGIS_EVIDENCE_NAME: ${{ matrix.evidence }}
+        run: bash "${{ matrix.script }}"
 
   ha-qualification:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: rust-quality
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js LTS
-        uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          check-latest: true
-          package-manager-cache: false
-
-      - name: Setup Rust 1.100.0
-        uses: dtolnay/rust-toolchain@1.100.0
-
-      - name: Build release binary
-        run: cargo build --release --locked
-
-      - name: Run HA qualification
-        run: PGAEGIS_DISPOSABLE_LAB=YES bash tests/ha/lab/run-e2e.sh
-
-      - name: Upload HA evidence
-        uses: actions/upload-artifact@v7
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
+      - run: cargo build --release --locked
+      - run: PGAEGIS_DISPOSABLE_LAB=YES bash tests/ha/lab/run-e2e.sh
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: ha-release-evidence
@@ -101,74 +135,44 @@ jobs:
     timeout-minutes: 30
     needs: rust-quality
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js LTS
-        uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          check-latest: true
-          package-manager-cache: false
-
-      - name: Run PITR qualification
-        run: bash tests/cert/run-pitr-lab.sh
+      - uses: actions/checkout@v7
+      - run: bash tests/cert/run-pitr-lab.sh
 
   storage-qualification:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: rust-quality
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js LTS
-        uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          check-latest: true
-          package-manager-cache: false
-
+      - uses: actions/checkout@v7
       - name: Build certification image
         run: docker build -t pgaegis-cert -f tests/cert/Dockerfile.cert tests/cert
-
       - name: Run storage fault qualification
         run: |
           mkdir -p tests/cert/evidence
-          docker run --rm --privileged             -v "$PWD/tests/cert/evidence:/evidence"             -e PGAEGIS_DISPOSABLE_VM=YES             -e PGAEGIS_CERT_DIR=/evidence             pgaegis-cert             /usr/local/bin/storage-faults
+          docker run --rm --privileged \
+            -v "$PWD/tests/cert/evidence:/evidence" \
+            -e PGAEGIS_DISPOSABLE_VM=YES \
+            -e PGAEGIS_CERT_DIR=/evidence \
+            pgaegis-cert \
+            /usr/local/bin/storage-faults
 
   monitoring-qualification:
     runs-on: ubuntu-latest
     needs: rust-quality
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js LTS
-        uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          check-latest: true
-          package-manager-cache: false
-
-      - name: Setup Rust 1.100.0
-        uses: dtolnay/rust-toolchain@1.100.0
-
-      - name: Build release binary
-        run: cargo build --release --locked
-
-      - name: Run monitoring fault qualification
-        run: bash tests/cert/monitoring-faults.sh
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
+      - run: cargo build --release --locked
+      - run: bash tests/cert/monitoring-faults.sh
 
   build-release:
     runs-on: ubuntu-latest
     needs:
-      - debian13-package
+      - package-lifecycle
       - ha-qualification
       - pitr-qualification
       - storage-qualification
       - monitoring-qualification
-
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -180,62 +184,70 @@ jobs:
           check-latest: true
           package-manager-cache: false
 
-      - name: Setup Rust 1.100.0
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.100.0
         with:
           targets: x86_64-unknown-linux-musl
 
-      - name: Build tools
+      - name: Install release build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools rpm zstd
           cargo install cross --locked
 
-      - name: Build binaries
+      - name: Build static release binaries
         run: |
-          cargo build --release --locked
           cargo build --release --locked --target x86_64-unknown-linux-musl
           cross build --release --locked --target aarch64-unknown-linux-musl
 
-      - name: Build native and generic packages
-        env:
-          VERSION: ${{ github.ref_name }}
+      - name: Build all Linux packages
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
 
-          VERSION="$VERSION" ARCH=amd64             BIN="$PWD/target/x86_64-unknown-linux-musl/release/pgaegis"             bash scripts/build-deb.sh
+          VERSION="$VERSION" ARCH=amd64 \
+            BIN="$PWD/target/x86_64-unknown-linux-musl/release/pgaegis" \
+            bash scripts/build-deb.sh
+          VERSION="$VERSION" ARCH=arm64 \
+            BIN="$PWD/target/aarch64-unknown-linux-musl/release/pgaegis" \
+            bash scripts/build-deb.sh
 
-          VERSION="$VERSION" ARCH=arm64             BIN="$PWD/target/aarch64-unknown-linux-musl/release/pgaegis"             bash scripts/build-deb.sh
+          VERSION="$VERSION" ARCH=x86_64 \
+            BIN="$PWD/target/x86_64-unknown-linux-musl/release/pgaegis" \
+            bash scripts/build-rpm.sh
+          VERSION="$VERSION" ARCH=aarch64 \
+            BIN="$PWD/target/aarch64-unknown-linux-musl/release/pgaegis" \
+            bash scripts/build-rpm.sh
 
-          VERSION="$VERSION" ARCH=x86_64             BIN="$PWD/target/x86_64-unknown-linux-musl/release/pgaegis"             bash scripts/build-rpm.sh
+          VERSION="$VERSION" ARCH=x86_64 \
+            BIN="$PWD/target/x86_64-unknown-linux-musl/release/pgaegis" \
+            bash scripts/build-arch.sh
+          VERSION="$VERSION" ARCH=aarch64 \
+            BIN="$PWD/target/aarch64-unknown-linux-musl/release/pgaegis" \
+            bash scripts/build-arch.sh
 
-          VERSION="$VERSION" ARCH=aarch64             BIN="$PWD/target/aarch64-unknown-linux-musl/release/pgaegis"             bash scripts/build-rpm.sh
+          VERSION="$VERSION" ARCH=x86_64 \
+            BIN="$PWD/target/x86_64-unknown-linux-musl/release/pgaegis" \
+            bash scripts/build-generic.sh
+          VERSION="$VERSION" ARCH=aarch64 \
+            BIN="$PWD/target/aarch64-unknown-linux-musl/release/pgaegis" \
+            bash scripts/build-generic.sh
 
-          VERSION="$VERSION" ARCH=x86_64             BIN="$PWD/target/x86_64-unknown-linux-musl/release/pgaegis"             bash scripts/build-arch.sh
-
-          VERSION="$VERSION" ARCH=aarch64             BIN="$PWD/target/aarch64-unknown-linux-musl/release/pgaegis"             bash scripts/build-arch.sh
-
-          VERSION="$VERSION" ARCH=x86_64             BIN="$PWD/target/x86_64-unknown-linux-musl/release/pgaegis"             bash scripts/build-generic.sh
-
-          VERSION="$VERSION" ARCH=aarch64             BIN="$PWD/target/aarch64-unknown-linux-musl/release/pgaegis"             bash scripts/build-generic.sh
-
+          cp install.sh dist/install.sh
           cd dist
-          sha256sum *.deb *.rpm *.pkg.tar.zst *.tar.gz > SHA256SUMS
+          sha256sum *.deb *.rpm *.pkg.tar.zst *.tar.gz install.sh > SHA256SUMS
 
-      - name: Native package smoke tests (x86_64)
+      - name: Verify release assets
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-
-          docker run --rm             -v "$PWD/dist:/dist:ro"             fedora:latest             bash -lc "dnf install -y /dist/pgaegis-${VERSION}-1.x86_64.rpm && pgaegis version | grep -qx 'pgaegis ${VERSION}'"
-
-          docker run --rm             -v "$PWD/dist:/dist:ro"             archlinux:latest             bash -lc "pacman -Sy --noconfirm && pacman -U --noconfirm /dist/pgaegis-${VERSION}-1-x86_64.pkg.tar.zst && pgaegis version | grep -qx 'pgaegis ${VERSION}'"
-
-          docker run --rm             -v "$PWD/dist:/dist:ro"             opensuse/leap:15.6             bash -lc "zypper --non-interactive install --allow-unsigned-rpm /dist/pgaegis-${VERSION}-1.x86_64.rpm && pgaegis version | grep -qx 'pgaegis ${VERSION}'"
-
-          rm -rf /tmp/pgaegis-generic
-          mkdir -p /tmp/pgaegis-generic
-          tar -xzf "dist/pgaegis_${VERSION}_linux_x86_64.tar.gz" -C /tmp/pgaegis-generic
-          test -x "$(find /tmp/pgaegis-generic -path '*/bin/pgaegis' -type f | head -1)"
+          test -f "dist/pgaegis_${VERSION}_amd64.deb"
+          test -f "dist/pgaegis_${VERSION}_arm64.deb"
+          test -f "dist/pgaegis-${VERSION}-1.x86_64.rpm"
+          test -f "dist/pgaegis-${VERSION}-1.aarch64.rpm"
+          test -f "dist/pgaegis-${VERSION}-1-x86_64.pkg.tar.zst"
+          test -f "dist/pgaegis-${VERSION}-1-aarch64.pkg.tar.zst"
+          test -f "dist/pgaegis_${VERSION}_linux_x86_64.tar.gz"
+          test -f "dist/pgaegis_${VERSION}_linux_aarch64.tar.gz"
+          (cd dist && sha256sum -c SHA256SUMS)
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v3
@@ -245,4 +257,5 @@ jobs:
             dist/*.rpm
             dist/*.pkg.tar.zst
             dist/*.tar.gz
+            dist/install.sh
             dist/SHA256SUMS

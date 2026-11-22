@@ -21,6 +21,9 @@ mkdir -p \
   "$DEST/usr/share/pgaegis/cert" \
   "$DEST/usr/share/doc/pgaegis"
 
+chmod 0755 "$DEST/DEBIAN"
+chmod g-s "$DEST/DEBIAN" 2>/dev/null || true
+
 cp "$ROOT/packaging/debian/control" "$DEST/DEBIAN/control"
 
 sed -i \
@@ -120,5 +123,7 @@ do
     "$ROOT/tests/cert/$certhelper" \
     "$DEST/usr/share/pgaegis/cert/$certhelper"
 done
+
+find "$DEST" -type d -exec chmod g-s {} + 2>/dev/null || true
 
 dpkg-deb --build --root-owner-group "$DEST" "$DEB"
