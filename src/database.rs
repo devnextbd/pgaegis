@@ -20,7 +20,7 @@ fn list()->Result<(),String>{
     let out=util::output("runuser", &["-u","postgres","--","psql","-Atqc",sql])?;
     let rows=out.lines().filter(|l|!l.trim().is_empty()).map(|line|{
         let p:Vec<&str>=line.split('|').collect();
-        vec![p.get(0).unwrap_or(&"").to_string(),p.get(1).unwrap_or(&"").to_string(),p.get(2).unwrap_or(&"-").to_string(),p.get(3).unwrap_or(&"0").to_string(),if p.get(4).copied()==Some("online"){ui::badge_ok("Online")}else{ui::badge_warn("Disabled")} ]
+        vec![p.first().unwrap_or(&"").to_string(),p.get(1).unwrap_or(&"").to_string(),p.get(2).unwrap_or(&"-").to_string(),p.get(3).unwrap_or(&"0").to_string(),if p.get(4).copied()==Some("online"){ui::badge_ok("Online")}else{ui::badge_warn("Disabled")} ]
     }).collect::<Vec<_>>();
     ui::table("PostgreSQL Databases", &["Database","Owner","Size","Connections","Status"], &rows);
     ui::success(&format!("{} database(s) found",rows.len()));
@@ -34,7 +34,7 @@ fn check_db(args:&[String])->Result<(),String>{
     if out.trim().is_empty(){return Err(format!("database {db} does not exist"));}
     let p:Vec<&str>=out.split('|').collect();
     ui::card("PostgreSQL Database", &[
-        ("Database",p.get(0).unwrap_or(&db).to_string()),("Owner",p.get(1).unwrap_or(&"-").to_string()),
+        ("Database",p.first().unwrap_or(&db).to_string()),("Owner",p.get(1).unwrap_or(&"-").to_string()),
         ("Size",p.get(2).unwrap_or(&"-").to_string()),("Encoding",p.get(3).unwrap_or(&"-").to_string()),
         ("Collation",p.get(4).unwrap_or(&"-").to_string()),("Connections",p.get(5).unwrap_or(&"0").to_string()),
         ("Connection limit",p.get(6).unwrap_or(&"-1").to_string()),("Status",if p.get(7).copied()==Some("t"){ui::badge_ok("Online")}else{ui::badge_warn("Connections disabled")}),

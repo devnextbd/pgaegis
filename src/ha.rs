@@ -138,7 +138,7 @@ fn status()->Result<(),String>{
         let role=p.get(2).copied().unwrap_or("-");
         let state=p.get(3).copied().unwrap_or("-");
         let health=if state.eq_ignore_ascii_case("running") || state.eq_ignore_ascii_case("streaming") {ui::badge_ok("Healthy")} else {ui::badge_warn(state)};
-        rows.push(vec![p.get(0).unwrap_or(&"-").to_string(),p.get(1).unwrap_or(&"-").to_string(),role.to_string(),state.to_string(),p.get(4).unwrap_or(&"-").to_string(),p.get(5).unwrap_or(&"-").to_string(),health]);
+        rows.push(vec![p.first().unwrap_or(&"-").to_string(),p.get(1).unwrap_or(&"-").to_string(),role.to_string(),state.to_string(),p.get(4).unwrap_or(&"-").to_string(),p.get(5).unwrap_or(&"-").to_string(),health]);
     }
     ui::table(&format!("PostgreSQL HA Cluster / {}",cfg.cluster_name), &["Member","Host","Role","State","TL","Lag","Health"], &rows);
     if rows.is_empty(){return Err("Patroni returned no cluster members".into());}
@@ -165,7 +165,7 @@ pub fn audit()->Result<(),String>{
                 let lines: Vec<&str> = members.lines().filter(|l| !l.trim().is_empty()).collect();
                 etcd_member_count=lines.len();
                 let ids: HashSet<&str> = lines.iter().filter_map(|l| l.split(',').next()).collect();
-                if lines.len() < 3 || lines.len() % 2 == 0 { failures.push("etcd must have an odd quorum of at least 3 voters".into()); }
+                if lines.len() < 3 || lines.len().is_multiple_of(2) { failures.push("etcd must have an odd quorum of at least 3 voters".into()); }
                 if ids.len() != lines.len() { failures.push("duplicate etcd member identity detected".into()); }
             },
             Err(e) => failures.push(format!("etcd member list failed: {e}")),

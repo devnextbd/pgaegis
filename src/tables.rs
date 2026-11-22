@@ -22,7 +22,7 @@ fn list(args: &[String]) -> Result<(), String> {
         let live=p.get(2).and_then(|v|v.parse::<u64>().ok()).unwrap_or(0);
         let health=if dead==0 || (live>0 && dead*100/live<5){ui::badge_ok("Healthy")} else if live>0 && dead*100/live<20{ui::badge_warn("Vacuum")} else {ui::badge_bad("Bloat risk")};
         vec![
-            p.get(0).unwrap_or(&"").to_string(), p.get(1).unwrap_or(&"").to_string(),
+            p.first().unwrap_or(&"").to_string(), p.get(1).unwrap_or(&"").to_string(),
             p.get(2).unwrap_or(&"0").to_string(), p.get(3).unwrap_or(&"-").to_string(),
             p.get(4).unwrap_or(&"0").to_string(), health,
         ]
@@ -41,7 +41,7 @@ fn check(args:&[String])->Result<(),String>{
     let out=psql_db(db,&sql)?; if out.trim().is_empty(){return Err(format!("table {schema}.{table} not found in {db}"));}
     let p:Vec<&str>=out.split('|').collect();
     ui::card("Table Health", &[
-        ("Database",db.into()),("Table",format!("{}.{}",p.get(0).unwrap_or(&schema),p.get(1).unwrap_or(&table))),
+        ("Database",db.into()),("Table",format!("{}.{}",p.first().unwrap_or(&schema),p.get(1).unwrap_or(&table))),
         ("Live rows",p.get(2).unwrap_or(&"0").to_string()),("Dead rows",p.get(3).unwrap_or(&"0").to_string()),
         ("Total size",p.get(4).unwrap_or(&"-").to_string()),("Last vacuum",p.get(5).unwrap_or(&"never").to_string()),
         ("Last autovacuum",p.get(6).unwrap_or(&"never").to_string()),("Last analyze",p.get(7).unwrap_or(&"never").to_string()),

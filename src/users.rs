@@ -15,7 +15,7 @@ fn list() -> Result<(), String> {
     let rows = out.lines().filter(|l| !l.trim().is_empty()).map(|line| {
         let p: Vec<&str> = line.split('|').collect();
         vec![
-            p.get(0).unwrap_or(&"").to_string(),
+            p.first().unwrap_or(&"").to_string(),
             yesno(p.get(1).copied().unwrap_or("f")),
             yesno(p.get(2).copied().unwrap_or("f")),
             yesno(p.get(3).copied().unwrap_or("f")),
@@ -38,7 +38,7 @@ fn check(args: &[String]) -> Result<(), String> {
     if out.trim().is_empty() { return Err(format!("role {name} does not exist")); }
     let p: Vec<&str> = out.split('|').collect();
     ui::card("PostgreSQL Role", &[
-        ("Role", p.get(0).unwrap_or(&"").to_string()),
+        ("Role", p.first().unwrap_or(&"").to_string()),
         ("Login", yesno(p.get(1).copied().unwrap_or("f"))),
         ("Superuser", yesno(p.get(2).copied().unwrap_or("f"))),
         ("Create DB", yesno(p.get(3).copied().unwrap_or("f"))),

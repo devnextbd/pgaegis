@@ -46,17 +46,6 @@ pub fn require_root()->Result<(),String> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::shell_quote;
-    #[test]
-    fn quotes_single_quotes() {
-        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
-    }
-}
-
-
-
 pub fn validate_safe_name(label:&str,value:&str)->Result<(),String>{
     if value.is_empty() || value.len()>128 || !value.chars().all(|c|c.is_ascii_alphanumeric() || matches!(c,'-'|'_'|'.')) {
         return Err(format!("{label} contains unsupported characters"));
@@ -183,5 +172,15 @@ pub fn prompt_yes_no(label:&str,default_yes:bool)->Result<bool,String>{
         match s.trim().to_ascii_lowercase().as_str(){
             ""=>return Ok(default_yes), "y"|"yes"=>return Ok(true), "n"|"no"=>return Ok(false), _=>println!("Please answer yes or no.")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shell_quote;
+
+    #[test]
+    fn quotes_single_quotes() {
+        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 }

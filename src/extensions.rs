@@ -14,14 +14,14 @@ pub fn dispatch(args:&[String])->Result<(),String>{
 fn list_available(args:&[String])->Result<(),String>{
     let db=arg(args,"--db").unwrap_or("postgres"); validate_ident(db)?;
     let out=util::output("runuser", &["-u","postgres","--","psql","-d",db,"-Atc","SELECT name||'|'||default_version||'|'||COALESCE(installed_version,'') FROM pg_available_extensions ORDER BY name;"])?;
-    let rows=out.lines().filter(|x|!x.trim().is_empty()).map(|l|{let p:Vec<&str>=l.split('|').collect(); vec![p.get(0).unwrap_or(&"").to_string(),p.get(1).unwrap_or(&"-").to_string(),if p.get(2).copied().unwrap_or("").is_empty(){ui::dim("Not enabled")}else{ui::badge_ok(p.get(2).copied().unwrap_or("enabled"))}]}).collect::<Vec<_>>();
+    let rows=out.lines().filter(|x|!x.trim().is_empty()).map(|l|{let p:Vec<&str>=l.split('|').collect(); vec![p.first().unwrap_or(&"").to_string(),p.get(1).unwrap_or(&"-").to_string(),if p.get(2).copied().unwrap_or("").is_empty(){ui::dim("Not enabled")}else{ui::badge_ok(p.get(2).copied().unwrap_or("enabled"))}]}).collect::<Vec<_>>();
     ui::table(&format!("{db} / Available Extensions"), &["Extension","Default","Installed"], &rows); Ok(())
 }
 
 fn list_installed(args:&[String])->Result<(),String>{
     let db=arg(args,"--db").unwrap_or("postgres"); validate_ident(db)?;
     let out=util::output("runuser", &["-u","postgres","--","psql","-d",db,"-Atc","SELECT extname||'|'||extversion FROM pg_extension ORDER BY extname;"])?;
-    let rows=out.lines().filter(|x|!x.trim().is_empty()).map(|l|{let p:Vec<&str>=l.split('|').collect(); vec![p.get(0).unwrap_or(&"").to_string(),p.get(1).unwrap_or(&"-").to_string(),ui::badge_ok("Enabled")]}).collect::<Vec<_>>();
+    let rows=out.lines().filter(|x|!x.trim().is_empty()).map(|l|{let p:Vec<&str>=l.split('|').collect(); vec![p.first().unwrap_or(&"").to_string(),p.get(1).unwrap_or(&"-").to_string(),ui::badge_ok("Enabled")]}).collect::<Vec<_>>();
     ui::table(&format!("{db} / Enabled Extensions"), &["Extension","Version","Status"], &rows); Ok(())
 }
 

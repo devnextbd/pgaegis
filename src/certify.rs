@@ -78,12 +78,31 @@ fn tls_permissions(cfg:&Config,role:&str)->bool{
         certs.push("/etc/postgresql/tls/ca.crt");
     }
     let checkend=cfg.certificate_min_valid_days.saturating_mul(86400).to_string();
-    for cert in certs { if !Path::new(cert).exists(){return false;} if !std::process::Command::new("openssl").args(["x509","-checkend",&checkend,"-noout","-in",cert]).status().map(|x|x.success()).unwrap_or(false){return false;} }
+    for cert in certs {
+        if !Path::new(cert).exists() {
+            return false;
+        }
+        if !std::process::Command::new("openssl")
+            .args(["x509", "-checkend", &checkend, "-noout", "-in", cert])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+        {
+            return false;
+        }
+    }
     for p in strict_private {if !safe_mode(p,false){return false;}}
     for p in group_read {if !safe_mode(p,true){return false;}}
     for (cert,key) in pairs {if !cert_key_match(cert,key){return false;}}
     for (ca,cert) in chains {if !cert_chain_ok(ca,cert){return false;}}
-    if role=="all" || role=="router" { if !cert_key_match("/etc/haproxy/tls/patroni-client.pem","/etc/haproxy/tls/patroni-client.pem"){return false;} }
+    if (role == "all" || role == "router")
+        && !cert_key_match(
+            "/etc/haproxy/tls/patroni-client.pem",
+            "/etc/haproxy/tls/patroni-client.pem",
+        )
+    {
+        return false;
+    }
     true
 }
 
@@ -144,7 +163,20 @@ fn signed_evidence_pass(cfg:&Config,name:&str,sig:&str)->bool{
 fn rto_rpo(cfg:&Config)->bool{
     let p=format!("{}/rto-rpo.env",cfg.certification_dir); let s=fs::read_to_string(p).unwrap_or_default();
     let mut status=false;let mut rto=None;let mut lost=None;let mut tested=0;
-    for l in s.lines(){if l=="status=PASS"{status=true;} if let Some(v)=l.strip_prefix("rto_seconds="){rto=v.parse::<u64>().ok();} if let Some(v)=l.strip_prefix("lost_committed_rows="){lost=v.parse::<u64>().ok();} if let Some(v)=l.strip_prefix("tested_epoch="){tested=v.parse::<u64>().unwrap_or(0);}}
+    for l in s.lines() {
+        if l == "status=PASS" {
+            status = true;
+        }
+        if let Some(v) = l.strip_prefix("rto_seconds=") {
+            rto = v.parse::<u64>().ok();
+        }
+        if let Some(v) = l.strip_prefix("lost_committed_rows=") {
+            lost = v.parse::<u64>().ok();
+        }
+        if let Some(v) = l.strip_prefix("tested_epoch=") {
+            tested = v.parse::<u64>().unwrap_or(0);
+        }
+    }
     status && tested>0 && util::unix_now().saturating_sub(tested)<=cfg.certification_evidence_max_age_hours.saturating_mul(3600) && rto.map(|x|x<=cfg.rto_target_seconds).unwrap_or(false) && lost.map(|x|x<=cfg.rpo_max_lost_rows).unwrap_or(false)
 }
 fn print_table(role:&str,g:&[Gate]){
@@ -162,6 +194,18 @@ fn report(role:&str)->Result<(),String>{let g=run_checks(role); let cfg=Config::
 ",esc(x.name),x.status,esc(&x.detail),if i+1==g.len(){""}else{","}));}out.push_str("  ]
 }
 ");let p=format!("{}/latest-report-{}.json",cfg.certification_dir,role);fs::write(&p,out).map_err(|e|e.to_string())?;println!("{p}");Ok(())}
-fn lab()->Result<(),String>{ if std::env::var("PGAEGIS_DISPOSABLE_LAB").ok().as_deref()!=Some("YES"){return Err("set PGAEGIS_DISPOSABLE_LAB=YES; certification fault tests are destructive".into());} if !Path::new("tests/cert/run-production-suite.sh").exists(){return Err("run this command from the source tree".into());} util::status("bash", &["tests/cert/run-production-suite.sh"]) }
+fn lab() -> Result<(), String> {
+    if std::env::var("PGAEGIS_DISPOSABLE_LAB").ok().as_deref() != Some("YES") {
+        return Err(
+            "set PGAEGIS_DISPOSABLE_LAB=YES; certification fault tests are destructive".into(),
+        );
+    }
+
+    if !Path::new("tests/cert/run-production-suite.sh").exists() {
+        return Err("run this command from the source tree".into());
+    }
+
+    util::status("bash", &["tests/cert/run-production-suite.sh"])
+}
 fn arg<'a>(a:&'a[String],k:&str)->Option<&'a str>{a.iter().position(|x|x==k).and_then(|i|a.get(i+1)).map(String::as_str)}
 fn esc(s:&str)->String{s.replace('\\',"\\\\").replace('"',"\\\"").replace('\n',"\\n")}
