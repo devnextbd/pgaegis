@@ -100,7 +100,7 @@ docker run --rm \
 
     apt-get install -y "$NEW_PACKAGE"
 
-    dpkg-query -W -f="${Version}\n" pgaegis \
+    dpkg-query -W -f="\${Version}\\n" pgaegis \
       | grep -qx "${CURRENT_VERSION}"
 
     pgaegis version | grep -qx "pgaegis ${CURRENT_VERSION}"
