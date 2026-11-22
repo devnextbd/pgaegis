@@ -23,7 +23,7 @@ trap restore_sources EXIT
 
 rm -rf "$ROOT/dist"
 
-# Build an actual previous-version binary/package, not merely a package label.
+# Build an actual previous-version binary/package.
 sed -i \
   "0,/^version = \"${CURRENT_VERSION}\"/s//version = \"${PREVIOUS_VERSION}\"/" \
   Cargo.toml
@@ -42,7 +42,7 @@ if [[ -z "$OLD_PACKAGE" || ! -f "$OLD_PACKAGE" ]]; then
   exit 1
 fi
 
-# Restore the current source version before building the current package.
+# Restore current source version before building the current package.
 mv -f Cargo.toml.lifecycle.bak Cargo.toml
 
 if [[ -f Cargo.lock.lifecycle.bak ]]; then
@@ -63,7 +63,7 @@ if [[ -z "$NEW_PACKAGE" || ! -f "$NEW_PACKAGE" ]]; then
   exit 1
 fi
 
-# Recreate the Cargo.toml backup so the EXIT trap remains idempotent.
+# Recreate backup so EXIT cleanup remains idempotent.
 cp Cargo.toml Cargo.toml.lifecycle.bak
 
 OLD_BASENAME="$(basename "$OLD_PACKAGE")"
@@ -71,14 +71,6 @@ NEW_BASENAME="$(basename "$NEW_PACKAGE")"
 
 mkdir -p "$EVIDENCE_DIR"
 
-# Mount the complete dist directory by ABSOLUTE host path.
-#
-# Docker interprets a relative source such as:
-#   dist/pgaegis_1.0.0_amd64.deb
-# as a named volume and rejects the "/" characters.
-#
-# Mounting "$ROOT/dist" avoids that ambiguity and works reliably on
-# GitHub-hosted runners and local Docker installations.
 docker run --rm \
   --mount "type=bind,source=${ROOT}/dist,target=/dist,readonly" \
   -e "OLD_PACKAGE=/dist/${OLD_BASENAME}" \
@@ -91,29 +83,77 @@ docker run --rm \
 
     apt-get update
 
-    # Clean install of the previous release.
+    # 1. Clean install old release.
     apt-get install -y "$OLD_PACKAGE"
-    pgaegis version | grep -qx "pgaegis ${PREVIOUS_VERSION}"
 
-    # Verify user configuration survives an in-place package upgrade.
-    printf '\n%s\n' "CUSTOM_MARKER=preserve-me" >> /etc/pgaegis/pgaegis.conf
+    pgaegis version \
+      | grep -qx "pgaegis ${PREVIOUS_VERSION}"
 
+    test -f /etc/pgaegis/pgaegis.conf
+
+    # 2. Simulate a real operator edit.
+    printf "\n%s\n" \
+      "CUSTOM_MARKER=preserve-me" \
+      >> /etc/pgaegis/pgaegis.conf
+
+    grep -qx \
+      "CUSTOM_MARKER=preserve-me" \
+      /etc/pgaegis/pgaegis.conf
+
+    before_sha="$(
+      sha256sum /etc/pgaegis/pgaegis.conf \
+        | awk "{print \$1}"
+    )"
+
+    # 3. Upgrade to current release.
     apt-get install -y "$NEW_PACKAGE"
 
     dpkg-query -W -f="\${Version}\\n" pgaegis \
       | grep -qx "${CURRENT_VERSION}"
 
-    pgaegis version | grep -qx "pgaegis ${CURRENT_VERSION}"
-    grep -qx "CUSTOM_MARKER=preserve-me" /etc/pgaegis/pgaegis.conf
+    pgaegis version \
+      | grep -qx "pgaegis ${CURRENT_VERSION}"
 
-    # Verify repair recreates a missing manager config without touching PGDATA.
+    # 4. Operator config MUST remain byte-for-byte unchanged.
+    after_sha="$(
+      sha256sum /etc/pgaegis/pgaegis.conf \
+        | awk "{print \$1}"
+    )"
+
+    test "$before_sha" = "$after_sha"
+
+    grep -qx \
+      "CUSTOM_MARKER=preserve-me" \
+      /etc/pgaegis/pgaegis.conf
+
+    # 5. Repair should recreate config only when it is missing.
     rm -f /etc/pgaegis/pgaegis.conf
+
     pgaegis repair --fix
+
     test -f /etc/pgaegis/pgaegis.conf
 
-    # Verify package removal removes the CLI.
+    # Re-add an operator marker to verify normal package removal preserves config.
+    printf "\n%s\n" \
+      "REMOVE_MARKER=preserve-me" \
+      >> /etc/pgaegis/pgaegis.conf
+
+    # 6. Normal remove: binary gone, config remains.
     apt-get remove -y pgaegis
+
     test ! -e /usr/bin/pgaegis
+    test -f /etc/pgaegis/pgaegis.conf
+
+    grep -qx \
+      "REMOVE_MARKER=preserve-me" \
+      /etc/pgaegis/pgaegis.conf
+
+    # 7. Reinstall then purge: package-owned config is intentionally removed.
+    apt-get install -y "$NEW_PACKAGE"
+    apt-get purge -y pgaegis
+
+    test ! -e /usr/bin/pgaegis
+    test ! -e /etc/pgaegis/pgaegis.conf
   '
 
 printf '%s\n' \
@@ -122,7 +162,8 @@ printf '%s\n' \
   'upgrade=PASS' \
   'config_preserved=PASS' \
   'repair=PASS' \
-  'uninstall=PASS' \
+  'remove_preserves_config=PASS' \
+  'purge_removes_config=PASS' \
   "tested_at=$(date -u +%FT%TZ)" \
   "tested_epoch=$(date +%s)" \
   > "$EVIDENCE_DIR/debian13-package.env"
