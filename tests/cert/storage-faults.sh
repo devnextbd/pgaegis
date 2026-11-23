@@ -82,6 +82,10 @@ cleanup() {
 
   rm -rf "$BASE"
   chmod -R a+rX "$PGAEGIS_CERT_DIR" >/dev/null 2>&1 || true
+  # Hand evidence back to the host user that owns the bind mount.
+  if [ -n "${PGAEGIS_EVIDENCE_UID:-}" ]; then
+    chown -R "${PGAEGIS_EVIDENCE_UID}:${PGAEGIS_EVIDENCE_GID:-$PGAEGIS_EVIDENCE_UID}" "$PGAEGIS_CERT_DIR" >/dev/null 2>&1 || true
+  fi
   exit "$rc"
 }
 trap cleanup EXIT
@@ -147,17 +151,16 @@ mount -t tmpfs -o size=192m tmpfs "$SAFE_WAL"
 mkdir -p "$DATA"
 chown -R postgres:postgres "$DATA_MNT" "$SAFE_WAL"
 
+# initdb --waldir places pg_wal (including the initial checkpoint record) on
+# the separate filesystem and creates the symlink itself. Deleting and
+# re-linking pg_wal after initdb would throw away that checkpoint.
 runuser -u postgres -- \
   "$PG_BIN/initdb" \
   -D "$DATA" \
+  --waldir="$SAFE_WAL/pg_wal" \
   --no-locale \
   --encoding=UTF8 \
   >/dev/null
-
-rm -rf "$DATA/pg_wal"
-install -d -o postgres -g postgres -m 0700 "$SAFE_WAL/pg_wal"
-ln -s "$SAFE_WAL/pg_wal" "$DATA/pg_wal"
-chown -h postgres:postgres "$DATA/pg_wal"
 
 cat >>"$DATA/postgresql.conf" <<CFG
 port=$DATA_PORT
@@ -235,22 +238,18 @@ WAL_LOG="$LOG_DIR/wal-full.log"
 WAL_PORT=55434
 
 mkdir -p "$WAL_DATA" "$WAL_MNT"
-chown -R postgres:postgres "$WAL_DATA" "$WAL_MNT"
+
+# Mount the WAL filesystem BEFORE initdb so the initial WAL lands on it.
+mount -t tmpfs -o size=160m tmpfs "$WAL_MNT"
+chown postgres:postgres "$WAL_DATA" "$WAL_MNT"
 
 runuser -u postgres -- \
   "$PG_BIN/initdb" \
   -D "$WAL_DATA" \
+  --waldir="$WAL_MNT/pg_wal" \
   --no-locale \
   --encoding=UTF8 \
   >/dev/null
-
-mount -t tmpfs -o size=160m tmpfs "$WAL_MNT"
-chown postgres:postgres "$WAL_MNT"
-
-rm -rf "$WAL_DATA/pg_wal"
-install -d -o postgres -g postgres -m 0700 "$WAL_MNT/pg_wal"
-ln -s "$WAL_MNT/pg_wal" "$WAL_DATA/pg_wal"
-chown -h postgres:postgres "$WAL_DATA/pg_wal"
 
 cat >>"$WAL_DATA/postgresql.conf" <<CFG
 port=$WAL_PORT

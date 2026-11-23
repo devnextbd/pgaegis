@@ -72,62 +72,10 @@ jobs:
           name: package-${{ matrix.evidence }}
           path: tests/ha/lab/evidence/${{ matrix.evidence }}
 
-  ha-e2e:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.100.0
-      - run: cargo build --release --locked
-      - run: PGAEGIS_DISPOSABLE_LAB=YES bash tests/ha/lab/run-e2e.sh
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: ha-certification-evidence
-          path: tests/ha/lab/evidence/
-
-  pitr:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - run: bash tests/cert/run-pitr-lab.sh
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: pitr-certification-evidence
-          path: tests/cert/evidence/
-
-  storage-faults:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - run: docker build -t pgaegis-cert -f tests/cert/Dockerfile.cert tests/cert
-      - run: |
-          mkdir -p tests/cert/evidence
-          docker run --rm --privileged \
-            -v "$PWD/tests/cert/evidence:/evidence" \
-            -e PGAEGIS_DISPOSABLE_VM=YES \
-            -e PGAEGIS_CERT_DIR=/evidence \
-            pgaegis-cert \
-            /usr/local/bin/storage-faults
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: storage-certification-evidence
-          path: tests/cert/evidence/
-
-  monitoring-faults:
-    runs-on: ubuntu-latest
+  qualification:
     needs: rust-quality
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.100.0
-      - run: cargo build --release --locked
-      - run: bash tests/cert/monitoring-faults.sh
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: monitoring-fault-evidence
-          path: tests/cert/evidence/monitoring-faults.env
+    uses: ./.github/workflows/qualification.yml
+    permissions:
+      contents: read
+    with:
+      evidence-suffix: certification

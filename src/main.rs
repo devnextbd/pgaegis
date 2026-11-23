@@ -5,10 +5,13 @@ mod doctor;
 mod database;
 mod extensions;
 mod ha;
+mod json;
 mod monitor;
 mod optimize;
+mod pg;
 mod repair;
 mod routing;
+mod scram;
 mod system;
 mod tables;
 mod ui;
@@ -81,7 +84,7 @@ fn about() -> Result<(), String> {
 fn info() -> Result<(), String> {
     let cfg = config::Config::load();
     let pg_ready = if util::command_exists("pg_isready") && std::process::Command::new("pg_isready").arg("-q").status().map(|s|s.success()).unwrap_or(false) { ui::badge_ok("Ready") } else { ui::badge_warn("Not ready") };
-    let role = util::output("runuser", &["-u","postgres","--","psql","-Atqc","SELECT CASE WHEN pg_is_in_recovery() THEN 'Standby' ELSE 'Primary' END;"]).unwrap_or_else(|_| "Unavailable".into());
+    let role = pg::query("postgres","SELECT CASE WHEN pg_is_in_recovery() THEN 'Standby' ELSE 'Primary' END;").unwrap_or_else(|_| "Unavailable".into());
     ui::card("pgaegis / System", &[
         ("Version", env!("CARGO_PKG_VERSION").into()),
         ("OS", util::os_pretty_name()),

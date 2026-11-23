@@ -61,26 +61,40 @@ bootstrap:
         ssl_ca_file: /etc/postgresql/tls/ca.crt
         ssl_cert_file: /etc/postgresql/tls/server.crt
         ssl_key_file: /etc/postgresql/tls/server.key
-  pg_hba:
-    - local all all peer
-    - hostssl all all ${CLIENT_CIDR} scram-sha-256 clientcert=verify-ca
-    - hostssl replication replicator ${REPLICATION_CIDR} scram-sha-256 clientcert=verify-ca
 
 postgresql:
   listen: 0.0.0.0:5432
   connect_address: ${NODE_IP}:5432
   data_dir: ${PGDATA}
   bin_dir: /usr/lib/postgresql/18/bin
+  # Managed by Patroni on every member (bootstrap.pg_hba is not the place for
+  # this). Peer replication and pg_rewind come from the replication network;
+  # applications from the client network. All TCP access needs a client cert.
+  pg_hba:
+    - local all all peer
+    - hostssl replication replicator ${REPLICATION_CIDR} scram-sha-256 clientcert=verify-ca
+    - hostssl all rewind_user ${REPLICATION_CIDR} scram-sha-256 clientcert=verify-ca
+    - hostssl all all ${CLIENT_CIDR} scram-sha-256 clientcert=verify-ca
   authentication:
     superuser:
       username: postgres
       password: ${POSTGRES_PASSWORD}
+    # clientcert=verify-ca above requires these connections to present a
+    # certificate signed by the PostgreSQL CA.
     replication:
       username: replicator
       password: ${REPLICATION_PASSWORD}
+      sslmode: verify-ca
+      sslrootcert: /etc/postgresql/tls/ca.crt
+      sslcert: /etc/postgresql/tls/client.crt
+      sslkey: /etc/postgresql/tls/client.key
     rewind:
       username: rewind_user
       password: ${REWIND_PASSWORD}
+      sslmode: verify-ca
+      sslrootcert: /etc/postgresql/tls/ca.crt
+      sslcert: /etc/postgresql/tls/client.crt
+      sslkey: /etc/postgresql/tls/client.key
 
 watchdog:
   mode: required

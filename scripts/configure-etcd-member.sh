@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 [ "${EUID:-$(id -u)}" -eq 0 ] || { echo "Run as root" >&2; exit 2; }
-usage(){ echo "Usage: $0 --name etcd1 --ip 10.0.0.21 --initial-cluster 'etcd1=https://10.0.0.21:2380,etcd2=https://10.0.0.22:2380,etcd3=https://10.0.0.23:2380'" >&2; exit 2; }
-name= ip= initial=
-while [ $# -gt 0 ]; do case "$1" in --name) name=$2;shift 2;;--ip) ip=$2;shift 2;;--initial-cluster) initial=$2;shift 2;;*) usage;;esac; done
+usage(){ echo "Usage: $0 --name etcd1 --ip 10.0.0.21 --initial-cluster 'etcd1=https://10.0.0.21:2380,etcd2=https://10.0.0.22:2380,etcd3=https://10.0.0.23:2380' [--cluster-state new|existing]" >&2; exit 2; }
+name= ip= initial= state=new
+while [ $# -gt 0 ]; do case "$1" in --name) name=${2:-};shift 2;;--ip) ip=${2:-};shift 2;;--initial-cluster) initial=${2:-};shift 2;;--cluster-state) state=${2:-};shift 2;;*) usage;;esac; done
 [ -n "$name" ] && [ -n "$ip" ] && [ -n "$initial" ] || usage
+# Values are written into a systemd unit: allow only safe characters.
+[[ "$name" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || { echo "Invalid --name" >&2; exit 2; }
+[[ "$ip" =~ ^[0-9A-Fa-f:.]{2,45}$ ]] || { echo "Invalid --ip" >&2; exit 2; }
+member_re='[A-Za-z0-9._-]+=https://[]A-Za-z0-9.:[-]+:[0-9]+'
+[[ "$initial" =~ ^${member_re}(,${member_re})*$ ]] || { echo "Invalid --initial-cluster (name=https://host:2380,...)" >&2; exit 2; }
+case "$state" in new|existing) ;; *) echo "--cluster-state must be new or existing (use existing when replacing/adding a member)" >&2; exit 2;; esac
 for f in /etc/etcd/tls/ca.crt /etc/etcd/tls/server.crt /etc/etcd/tls/server.key /etc/etcd/tls/peer.crt /etc/etcd/tls/peer.key; do [ -s "$f" ] || { echo "Missing $f" >&2; exit 1; }; done
 install -d -m 0700 /var/lib/etcd
 cat >/etc/systemd/system/etcd-pgaegis.service <<UNIT
@@ -23,7 +29,9 @@ ExecStart=/usr/local/bin/etcd \\
   --listen-peer-urls=https://${ip}:2380 \\
   --initial-advertise-peer-urls=https://${ip}:2380 \\
   --initial-cluster=${initial} \\
-  --initial-cluster-state=new \\
+  --initial-cluster-state=${state} \\
+  --auto-compaction-mode=periodic --auto-compaction-retention=1h \\
+  --quota-backend-bytes=8589934592 \\
   --client-cert-auth=true --trusted-ca-file=/etc/etcd/tls/ca.crt \\
   --cert-file=/etc/etcd/tls/server.crt --key-file=/etc/etcd/tls/server.key \\
   --peer-client-cert-auth=true --peer-trusted-ca-file=/etc/etcd/tls/ca.crt \\
@@ -42,3 +50,4 @@ WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
 systemctl enable --now etcd-pgaegis.service
+echo "etcd member ${name} configured (state=${state}, hourly auto-compaction). Run 'etcdctl defrag' per member during maintenance to reclaim space."

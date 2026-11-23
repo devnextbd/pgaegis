@@ -1,4 +1,5 @@
 use crate::{ui,util};
+use crate::util::arg;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -24,7 +25,7 @@ fn install(args:&[String])->Result<(),String>{
             run_helper_env("install-patroni-debian13.sh", &[("PATRONI_VERSION",version)], &[])
         },
         "etcd" => {
-            let version=arg(args,"--version").unwrap_or("3.7.4"); let sha=arg(args,"--sha256").ok_or("--sha256 from the official etcd release is required")?;
+            let version=arg(args,"--version").unwrap_or("3.7.4"); util::validate_safe_name("--version",version)?; let sha=arg(args,"--sha256").ok_or("--sha256 from the official etcd release is required")?;
             if sha.len()!=64 || !sha.chars().all(|c|c.is_ascii_hexdigit()){return Err("--sha256 must be a 64-character SHA-256 hex digest".into());}
             run_helper_env("install-etcd-debian13.sh", &[("ETCD_VERSION",version),("ETCD_SHA256",sha)], &[])
         },
@@ -63,7 +64,7 @@ fn swap_setup(args:&[String])->Result<(),String>{
     util::require_root()?;
     let gb=arg(args,"--size-gb").ok_or("--size-gb is required")?.parse::<u64>().map_err(|_|"--size-gb must be an integer")?;
     if !(1..=64).contains(&gb){return Err("--size-gb must be between 1 and 64 GiB".into());}
-    let file=arg(args,"--file").unwrap_or("/swapfile"); util::validate_abs_path("--file",file)?;
+    let file=arg(args,"--file").unwrap_or("/swapfile"); util::validate_plain_path("--file",file)?;
     if fs::read_to_string("/proc/swaps").unwrap_or_default().lines().count()>1 && !args.iter().any(|x|x=="--allow-additional"){
         return Err("swap already exists; refusing to add another swap area without --allow-additional".into());
     }
@@ -80,16 +81,13 @@ fn swap_setup(args:&[String])->Result<(),String>{
     if !fstab.lines().any(|l|l.split_whitespace().next()==Some(file)){
         let backup=util::backup_file("/etc/fstab")?; if let Some(b)=backup{ui::note(&format!("Backed up /etc/fstab to {b}"));}
         let mut next=fstab; if !next.ends_with('\n'){next.push('\n');} next.push_str(&entry); next.push('\n');
-        fs::write("/etc/fstab",next).map_err(|e|format!("write /etc/fstab: {e}"))?;
+        util::atomic_write("/etc/fstab",&next,0o644).map_err(|e|format!("write /etc/fstab: {e}"))?;
     }
     ui::success(&format!("Configured {gb} GiB swap at {file}")); ui::note("No PostgreSQL memory setting was changed automatically.");
     Ok(())
 }
 
-fn helper_path(name:&str)->Result<String,String>{
-    for base in ["/usr/share/pgaegis/scripts","scripts"] { let p=format!("{base}/{name}"); if Path::new(&p).exists(){return Ok(p);} }
-    Err(format!("pgaegis helper not found: {name}"))
-}
+fn helper_path(name:&str)->Result<String,String>{ util::asset_path("scripts",name) }
 fn run_helper(name:&str,args:&[&str])->Result<(),String>{
     let p=helper_path(name)?; let mut c=Command::new("bash"); c.arg(&p).args(args);
     let st=c.status().map_err(|e|e.to_string())?; if st.success(){Ok(())}else{Err(format!("{name} failed with {st}"))}
@@ -97,4 +95,3 @@ fn run_helper(name:&str,args:&[&str])->Result<(),String>{
 fn run_helper_env(name:&str,envs:&[(&str,&str)],args:&[&str])->Result<(),String>{
     let p=helper_path(name)?; let mut c=Command::new("bash"); c.arg(&p).args(args); for &(k,v) in envs{c.env(k,v);} let st=c.status().map_err(|e|e.to_string())?; if st.success(){Ok(())}else{Err(format!("{name} failed with {st}"))}
 }
-fn arg<'a>(a:&'a[String],k:&str)->Option<&'a str>{a.iter().position(|x|x==k).and_then(|i|a.get(i+1)).map(String::as_str)}

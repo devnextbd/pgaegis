@@ -5,7 +5,7 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   NODE_VERSION: "26.13.1"
@@ -117,76 +117,21 @@ jobs:
           PGAEGIS_EVIDENCE_NAME: ${{ matrix.evidence }}
         run: bash "${{ matrix.script }}"
 
-  ha-qualification:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+  qualification:
     needs: rust-quality
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.100.0
-      - run: cargo build --release --locked
-      - run: PGAEGIS_DISPOSABLE_LAB=YES bash tests/ha/lab/run-e2e.sh
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: ha-release-evidence
-          path: tests/ha/lab/evidence/
-
-  pitr-qualification:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs: rust-quality
-    steps:
-      - uses: actions/checkout@v7
-      - run: bash tests/cert/run-pitr-lab.sh
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: pitr-release-evidence
-          path: tests/cert/evidence/
-          if-no-files-found: warn
-
-  storage-qualification:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: rust-quality
-    steps:
-      - uses: actions/checkout@v7
-      - name: Build certification image
-        run: docker build -t pgaegis-cert -f tests/cert/Dockerfile.cert tests/cert
-      - name: Run storage fault qualification
-        run: |
-          mkdir -p tests/cert/evidence
-          docker run --rm --privileged \
-            -v "$PWD/tests/cert/evidence:/evidence" \
-            -e PGAEGIS_DISPOSABLE_VM=YES \
-            -e PGAEGIS_CERT_DIR=/evidence \
-            pgaegis-cert \
-            /usr/local/bin/storage-faults
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: storage-release-evidence
-          path: tests/cert/evidence/
-          if-no-files-found: warn
-
-  monitoring-qualification:
-    runs-on: ubuntu-latest
-    needs: rust-quality
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.100.0
-      - run: cargo build --release --locked
-      - run: bash tests/cert/monitoring-faults.sh
+    uses: ./.github/workflows/qualification.yml
+    permissions:
+      contents: read
+    with:
+      evidence-suffix: release
 
   build-release:
     runs-on: ubuntu-latest
     needs:
       - package-lifecycle
-      - ha-qualification
-      - pitr-qualification
-      - storage-qualification
-      - monitoring-qualification
+      - qualification
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -207,7 +152,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools rpm zstd
-          cargo install cross --locked
+          cargo install cross --locked --version 0.2.5
 
       - name: Build static release binaries
         run: |
@@ -250,6 +195,22 @@ jobs:
           cd dist
           sha256sum *.deb *.rpm *.pkg.tar.zst *.tar.gz install.sh > SHA256SUMS
 
+      - name: Sign release checksums
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.PGAEGIS_RELEASE_SIGNING_KEY }}
+        run: |
+          if [ -z "${RELEASE_SIGNING_KEY:-}" ]; then
+            echo "::warning::PGAEGIS_RELEASE_SIGNING_KEY secret is not set; release is UNSIGNED and 'pgaegis update' will refuse it unless --allow-unsigned is used"
+            exit 0
+          fi
+          umask 077
+          key="$(mktemp)"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$key"
+          openssl dgst -sha256 -sign "$key" -out dist/SHA256SUMS.sig dist/SHA256SUMS
+          openssl pkey -in "$key" -pubout -out dist/release-signing.pub
+          openssl dgst -sha256 -verify dist/release-signing.pub -signature dist/SHA256SUMS.sig dist/SHA256SUMS
+
       - name: Verify release assets
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -273,3 +234,5 @@ jobs:
             dist/*.tar.gz
             dist/install.sh
             dist/SHA256SUMS
+            dist/SHA256SUMS.sig
+            dist/release-signing.pub

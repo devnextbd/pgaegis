@@ -57,6 +57,8 @@ docker run --rm \
   -v "$REPO_VOL:/repo" \
   -v "$STATE_VOL:/state" \
   -v "$EVIDENCE:/evidence" \
+  -e PGAEGIS_EVIDENCE_UID="$(id -u)" \
+  -e PGAEGIS_EVIDENCE_GID="$(id -g)" \
   -v "$ROOT/tests/cert/pitr-restore-node.sh:/pitr-restore-node.sh:ro" \
   "$IMAGE" \
   bash /pitr-restore-node.sh \
@@ -72,5 +74,8 @@ if [ "$restore_rc" -ne 0 ]; then
 fi
 
 test -s "$EVIDENCE/pitr.env"
-chmod -R a+rX "$EVIDENCE"
+# Files written by the root container may not be chmod-able by the runner
+# user; the container already sets 0644 and chowns them back, so this is
+# best-effort only and must never fail a passing drill.
+chmod -R a+rX "$EVIDENCE" 2>/dev/null || true
 cat "$EVIDENCE/pitr.env"

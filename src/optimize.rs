@@ -1,4 +1,5 @@
-use crate::util;
+use crate::{pg,util};
+use crate::util::arg;
 
 pub fn dispatch(args:&[String])->Result<(),String>{
     match args.first().map(String::as_str) {
@@ -13,13 +14,13 @@ pub fn dispatch(args:&[String])->Result<(),String>{
 }
 
 fn report(db:&str)->Result<(),String>{
-    validate_ident(db)?;
+    pg::validate_ident(db)?;
     println!("PostgreSQL configuration");
-    println!("{}",util::output("psql", &["-d",db,"-x","-c","SELECT name,setting,unit,source FROM pg_settings WHERE name IN ('shared_buffers','effective_cache_size','work_mem','maintenance_work_mem','wal_buffers','checkpoint_completion_target','random_page_cost','effective_io_concurrency','max_connections','autovacuum','autovacuum_vacuum_scale_factor','autovacuum_analyze_scale_factor','log_min_duration_statement') ORDER BY name;"])?);
+    println!("{}",pg::report(db,"SELECT name,setting,unit,source FROM pg_settings WHERE name IN ('shared_buffers','effective_cache_size','work_mem','maintenance_work_mem','wal_buffers','checkpoint_completion_target','random_page_cost','effective_io_concurrency','max_connections','autovacuum','autovacuum_vacuum_scale_factor','autovacuum_analyze_scale_factor','log_min_duration_statement') ORDER BY name;",true)?);
     println!("\nTop dead-tuple tables");
-    println!("{}",util::output("psql", &["-d",db,"-c","SELECT schemaname,relname,n_live_tup,n_dead_tup,last_autovacuum,last_analyze FROM pg_stat_user_tables ORDER BY n_dead_tup DESC NULLS LAST LIMIT 20;"])?);
+    println!("{}",pg::report(db,"SELECT schemaname,relname,n_live_tup,n_dead_tup,last_autovacuum,last_analyze FROM pg_stat_user_tables ORDER BY n_dead_tup DESC NULLS LAST LIMIT 20;",false)?);
     println!("\nIndex scan statistics");
-    println!("{}",util::output("psql", &["-d",db,"-c","SELECT schemaname,relname,indexrelname,idx_scan,pg_size_pretty(pg_relation_size(indexrelid)) AS size FROM pg_stat_user_indexes ORDER BY idx_scan ASC,pg_relation_size(indexrelid) DESC LIMIT 30;"])?);
+    println!("{}",pg::report(db,"SELECT schemaname,relname,indexrelname,idx_scan,pg_size_pretty(pg_relation_size(indexrelid)) AS size FROM pg_stat_user_indexes ORDER BY idx_scan ASC,pg_relation_size(indexrelid) DESC LIMIT 30;",false)?);
     Ok(())
 }
 
@@ -41,36 +42,32 @@ fn recommend()->Result<(),String>{
 }
 
 fn analyze(args:&[String])->Result<(),String>{
-    util::require_root()?; ensure_primary()?;
-    let db=arg(args,"--db").unwrap_or("postgres"); validate_ident(db)?;
-    if let Some(table)=arg(args,"--table") { let q=quote_qualified(table)?; util::status("runuser", &["-u","postgres","--","psql","-d",db,"-v","ON_ERROR_STOP=1","-c",&format!("ANALYZE VERBOSE {q};")]) }
-    else { util::status("runuser", &["-u","postgres","--","psql","-d",db,"-v","ON_ERROR_STOP=1","-c","ANALYZE VERBOSE;"]) }
+    util::require_root()?; pg::ensure_writable_primary("maintenance mutation")?;
+    let db=arg(args,"--db").unwrap_or("postgres"); pg::validate_ident(db)?;
+    if let Some(table)=arg(args,"--table") { let q=pg::quote_qualified(table)?; pg::exec(db,&format!("ANALYZE VERBOSE {q};")) }
+    else { pg::exec(db,"ANALYZE VERBOSE;") }
 }
 
 fn autovacuum(args:&[String])->Result<(),String>{
-    util::require_root()?; ensure_primary()?;
-    let db=arg(args,"--db").ok_or("--db required")?; validate_ident(db)?;
-    let table=arg(args,"--table").ok_or("--table schema.table required")?; let q=quote_qualified(table)?;
+    util::require_root()?; pg::ensure_writable_primary("maintenance mutation")?;
+    let db=arg(args,"--db").ok_or("--db required")?; pg::validate_ident(db)?;
+    let table=arg(args,"--table").ok_or("--table schema.table required")?; let q=pg::quote_qualified(table)?;
     let vac=parse_factor(arg(args,"--vacuum-scale").unwrap_or("0.02"),"--vacuum-scale")?;
     let ana=parse_factor(arg(args,"--analyze-scale").unwrap_or("0.01"),"--analyze-scale")?;
     let sql=format!("ALTER TABLE {q} SET (autovacuum_vacuum_scale_factor={vac}, autovacuum_analyze_scale_factor={ana}); ANALYZE {q};");
-    util::status("runuser", &["-u","postgres","--","psql","-d",db,"-v","ON_ERROR_STOP=1","-c",&sql])
+    pg::exec(db,&sql)
 }
 
 fn queries(db:&str)->Result<(),String>{
-    validate_ident(db)?;
-    let exists=util::output("psql", &["-d",db,"-Atqc","SELECT 1 FROM pg_extension WHERE extname='pg_stat_statements';"])?;
+    pg::validate_ident(db)?;
+    let exists=pg::query(db,"SELECT 1 FROM pg_extension WHERE extname='pg_stat_statements';")?;
     if exists.trim()!="1" {return Err("pg_stat_statements is not enabled in this database. Use pgaegis extension preload pg_stat_statements, perform a controlled rolling restart, then pgaegis extension enable pg_stat_statements --db <db>".into());}
-    println!("{}",util::output("psql", &["-d",db,"-c","SELECT calls,round(total_exec_time::numeric,2) AS total_ms,round(mean_exec_time::numeric,2) AS mean_ms,rows,left(query,160) AS query FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 25;"])?); Ok(())
+    println!("{}",pg::report(db,"SELECT calls,round(total_exec_time::numeric,2) AS total_ms,round(mean_exec_time::numeric,2) AS mean_ms,rows,left(query,160) AS query FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 25;",false)?); Ok(())
 }
 
 fn locks(db:&str)->Result<(),String>{
-    validate_ident(db)?;
-    println!("{}",util::output("psql", &["-d",db,"-c","SELECT blocked.pid AS blocked_pid,blocking.pid AS blocking_pid,blocked.wait_event_type,blocked.wait_event,left(blocked.query,120) AS blocked_query,left(blocking.query,120) AS blocking_query FROM pg_stat_activity blocked JOIN pg_locks bl ON bl.pid=blocked.pid AND NOT bl.granted JOIN pg_locks kl ON kl.locktype=bl.locktype AND kl.database IS NOT DISTINCT FROM bl.database AND kl.relation IS NOT DISTINCT FROM bl.relation AND kl.page IS NOT DISTINCT FROM bl.page AND kl.tuple IS NOT DISTINCT FROM bl.tuple AND kl.virtualxid IS NOT DISTINCT FROM bl.virtualxid AND kl.transactionid IS NOT DISTINCT FROM bl.transactionid AND kl.classid IS NOT DISTINCT FROM bl.classid AND kl.objid IS NOT DISTINCT FROM bl.objid AND kl.objsubid IS NOT DISTINCT FROM bl.objsubid AND kl.granted JOIN pg_stat_activity blocking ON blocking.pid=kl.pid WHERE blocked.pid<>blocking.pid;"])?); Ok(())
+    pg::validate_ident(db)?;
+    println!("{}",pg::report(db,"SELECT blocked.pid AS blocked_pid,blocking.pid AS blocking_pid,blocked.wait_event_type,blocked.wait_event,left(blocked.query,120) AS blocked_query,left(blocking.query,120) AS blocking_query FROM pg_stat_activity blocked JOIN pg_locks bl ON bl.pid=blocked.pid AND NOT bl.granted JOIN pg_locks kl ON kl.locktype=bl.locktype AND kl.database IS NOT DISTINCT FROM bl.database AND kl.relation IS NOT DISTINCT FROM bl.relation AND kl.page IS NOT DISTINCT FROM bl.page AND kl.tuple IS NOT DISTINCT FROM bl.tuple AND kl.virtualxid IS NOT DISTINCT FROM bl.virtualxid AND kl.transactionid IS NOT DISTINCT FROM bl.transactionid AND kl.classid IS NOT DISTINCT FROM bl.classid AND kl.objid IS NOT DISTINCT FROM bl.objid AND kl.objsubid IS NOT DISTINCT FROM bl.objsubid AND kl.granted JOIN pg_stat_activity blocking ON blocking.pid=kl.pid WHERE blocked.pid<>blocking.pid;",false)?); Ok(())
 }
 
-fn ensure_primary()->Result<(),String>{let x=util::output("runuser", &["-u","postgres","--","psql","-Atqc","SELECT NOT pg_is_in_recovery() AND current_setting('transaction_read_only')='off';"])?;if x.trim()=="t"{Ok(())}else{Err("maintenance mutation is allowed only on writable Primary".into())}}
 fn parse_factor(v:&str,label:&str)->Result<f64,String>{let x=v.parse::<f64>().map_err(|_|format!("{label} must be a number"))?;if (0.0..=1.0).contains(&x){Ok(x)}else{Err(format!("{label} must be between 0 and 1"))}}
-fn validate_ident(s:&str)->Result<(),String>{if !s.is_empty()&&s.len()<=63&&s.chars().all(|c|c.is_ascii_alphanumeric()||c=='_'){Ok(())}else{Err(format!("invalid identifier: {s}"))}}
-fn quote_qualified(s:&str)->Result<String,String>{let parts:Vec<&str>=s.split('.').collect();if parts.is_empty()||parts.len()>2{return Err("table must be table or schema.table".into());}for p in &parts{validate_ident(p)?;}Ok(parts.into_iter().map(|x|format!("\"{}\"",x)).collect::<Vec<_>>().join("."))}
-fn arg<'a>(a:&'a[String],k:&str)->Option<&'a str>{a.iter().position(|x|x==k).and_then(|i|a.get(i+1)).map(String::as_str)}

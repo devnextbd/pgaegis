@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased — security & reliability audit fixes
+
+Security
+- install.sh: a SHA-256 mismatch now aborts installation (previously ignored inside `if`/`||` contexts); optional release-signature verification via `PGAEGIS_RELEASE_PUBKEY`.
+- `pgaegis update`: private exclusive temp dir (no /tmp TOCTOU), signed `SHA256SUMS` required (`--allow-unsigned` to override), verified checksums handed to the installer.
+- Role passwords are hashed client-side to SCRAM-SHA-256 and all admin SQL goes over stdin (no plaintext in argv/server logs).
+- MONITOR_DSN password passed via `PGPASSWORD`, webhook URL via curl config on stdin.
+- Secret/config files written atomically with final permissions; restore-drill path traversal blocked.
+- Routing: HAProxy writer bound to loopback, PgBouncer/readers to loopback + `--listen-addr`; `--nodes` validated.
+- Plain-SQL restore requires `--acknowledge-plain-sql` and runs as the owner role.
+- Release workflow: least-privilege permissions, pinned `cross`, checksum signing step.
+
+Bug fixes
+- Patroni state parsed from `patronictl list -f json` (header/column bugs let 2-member clusters pass audits).
+- `database restore --replace` restores into a staging DB and swaps only on success; the old DB is kept.
+- `extension preload` reads the DCS value and aborts on error instead of wiping libraries.
+- `backup restore-drill` promotes, disables archiving and validates over the local socket.
+- Production Patroni template: `pg_hba` moved to `postgresql:`, replication/rewind client certificates, watchdog access for `postgres`.
+- PITR certification field names aligned with lab evidence; fencing evidence purpose split (certification vs failover).
+- Monitor uses a light pgBackRest check (no WAL switch every minute), curl timeouts, alert dedup and recovery notices.
+- Storage-fault and PITR labs fixed (initdb `--waldir`, evidence ownership); HA lab pg_hba placement fixed.
+- `optimize` commands run psql as `postgres`; EOF no longer loops the interactive console; `/etc/fstab` written atomically.
+- etcd helper: input validation, auto-compaction, `--cluster-state existing`.
+
+Quality
+- Shared helpers (`util`, `pg`), dependency-free JSON parser and SCRAM implementation, 32 unit tests including evidence-contract tests; qualification labs defined once in `qualification.yml`.
+
 ## 1.0.0 — pgaegis product rename, terminal UI and production qualification
 
 - Renamed the complete product/CLI/package/config/state surface to lowercase `pgaegis`.

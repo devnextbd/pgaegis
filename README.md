@@ -240,6 +240,15 @@ sudo pgaegis database restore \
   --replace
 ```
 
+With `--replace`, pgaegis validates the file first, restores into a staging database, and swaps names only after the restore fully succeeds. The previous database is kept as `<db>_pgaegis_replaced_<epoch>` until you drop it. A failed restore never touches the existing database.
+
+Plain SQL files (not `pg_dump -Fc` archives) run through `psql` and need an explicit acknowledgement after review, because psql meta-commands can execute OS commands:
+
+```bash
+sudo pgaegis database restore --db freeyfi --owner freeyfi \
+  --file /srv/postgresql-backups/freeyfi.sql --acknowledge-plain-sql
+```
+
 Full cluster SQL is more dangerous because it can change roles/databases:
 
 ```bash
@@ -424,6 +433,8 @@ sudo pgaegis replica ha failover \
   --acknowledge-possible-data-loss
 ```
 
+The signed evidence file must contain `purpose=failover`, `isolated=true`, `node=<fenced node>` and a future `expires_epoch=`. Certification drill evidence (`purpose=certification`) is deliberately rejected for failover.
+
 Do not fabricate fencing evidence. The trusted signer must reflect a real BMC/PDU/watchdog isolation action.
 
 ---
@@ -540,6 +551,8 @@ Force reinstallation of the same latest version:
 ```bash
 sudo pgaegis update --force
 ```
+
+Self-update requires a signed release: place the project's release-signing public key at `/etc/pgaegis/release-signing.pub` (it is published with each signed release as `release-signing.pub`; verify it out-of-band before pinning). Without a key the update is refused unless you pass `--allow-unsigned` (checksum-only).
 
 A pgaegis package rollback is **not** a PostgreSQL major-version rollback.
 

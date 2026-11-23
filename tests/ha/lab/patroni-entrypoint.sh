@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-install -d -o postgres -g postgres /var/lib/postgresql/data /var/run/postgresql /etc/patroni
+install -d -o postgres -g postgres -m 0700 /var/lib/postgresql/data
+install -d -o postgres -g postgres /var/run/postgresql /etc/patroni
 cat >/etc/patroni/patroni.yml <<YAML
 scope: pgaegis-lab
 name: ${NODE_NAME}
@@ -33,15 +34,17 @@ bootstrap:
         wal_log_hints: 'on'
         full_page_writes: 'on'
         password_encryption: scram-sha-256
-  pg_hba:
-    - local all all trust
-    - host all all 0.0.0.0/0 scram-sha-256
-    - host replication replicator 0.0.0.0/0 scram-sha-256
 postgresql:
   listen: 0.0.0.0:5432
   connect_address: ${NODE_NAME}:5432
   data_dir: /var/lib/postgresql/data
   bin_dir: /usr/lib/postgresql/18/bin
+  # pg_hba must live under postgresql: (managed by Patroni on every member).
+  # Under bootstrap: it is not applied, so replicas cannot pg_basebackup.
+  pg_hba:
+    - local all all trust
+    - host replication replicator 0.0.0.0/0 scram-sha-256
+    - host all all 0.0.0.0/0 scram-sha-256
   authentication:
     superuser: {username: postgres, password: postgres}
     replication: {username: replicator, password: rep-pass}

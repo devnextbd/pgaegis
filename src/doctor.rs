@@ -25,13 +25,9 @@ pub fn run()->Result<(),String>{
 
 fn service_status(name:&str)->String {
     if !util::command_exists("systemctl") { return ui::badge_warn("N/A"); }
-    match std::process::Command::new("systemctl").args(["is-active","--quiet",name]).status() {
-        Ok(s) if s.success()=>ui::badge_ok("Running"), _=>ui::badge_warn("Not active")
-    }
+    if util::systemd_active(name) { ui::badge_ok("Running") } else { ui::badge_warn("Not active") }
 }
 fn timer_status(name:&str)->String {
     if !util::command_exists("systemctl") { return ui::badge_warn("N/A"); }
-    match std::process::Command::new("systemctl").args(["is-enabled","--quiet",name]).status() {
-        Ok(s) if s.success()=>ui::badge_ok("Enabled"), _=>ui::badge_warn("Disabled")
-    }
+    if util::systemd_unit_ok(name,false) { ui::badge_ok("Enabled") } else { ui::badge_warn("Disabled") }
 }

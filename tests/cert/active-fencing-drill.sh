@@ -41,6 +41,7 @@ status=PASS
 watchdog_reset=PASS
 fence_isolation=PASS
 isolated=true
+purpose=certification
 node=$FENCE_NODE
 tested_at=$(date -u +%FT%TZ)
 tested_epoch=$now

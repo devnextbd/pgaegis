@@ -40,19 +40,25 @@ cat >/mockbin/pg_isready <<'SH'
 #!/bin/sh
 exit 0
 SH
+# Mirrors real `patronictl list -f json` output (Cluster column included).
 cat >/mockbin/patronictl <<'SH'
 #!/bin/sh
-if [ -f /tmp/node_fail ]; then
-  printf 'pg1\t10.0.0.1\tLeader\trunning\npg2\t10.0.0.2\tReplica\tstreaming\npg3\t10.0.0.3\tReplica\tstopped\n'
-else
-  printf 'pg1\t10.0.0.1\tLeader\trunning\npg2\t10.0.0.2\tReplica\tstreaming\npg3\t10.0.0.3\tReplica\tstreaming\n'
-fi
+case "$*" in *"-f json"*) ;; *) echo "mock patronictl expects -f json" >&2; exit 2 ;; esac
+pg3_state=streaming
+[ -f /tmp/node_fail ] && pg3_state=stopped
+printf '[{"Cluster":"pgaegis-test","Member":"pg1","Host":"10.0.0.1","Role":"Leader","State":"running","TL":1},'
+printf '{"Cluster":"pgaegis-test","Member":"pg2","Host":"10.0.0.2","Role":"Sync Standby","State":"streaming","TL":1,"Lag in MB":0},'
+printf '{"Cluster":"pgaegis-test","Member":"pg3","Host":"10.0.0.3","Role":"Replica","State":"%s","TL":1,"Lag in MB":0}]\n' "$pg3_state"
 SH
+# pgaegis sends SQL on stdin (never argv), so the mock matches argv + stdin.
 cat >/mockbin/psql <<'SH'
 #!/bin/sh
-case "$*" in
+input="$* $(cat 2>/dev/null)"
+case "$input" in
   *pg_stat_replication*) [ -f /tmp/lag_fail ] && echo 999999999 || echo 0 ;;
   *pg_replication_slots*) echo 0 ;;
+  *pg_stat_archiver*) echo ok ;;
+  *pg_is_in_recovery*) echo f ;;
   *) echo 1 ;;
 esac
 SH
@@ -62,6 +68,9 @@ exit 0
 SH
 cat >/mockbin/runuser <<'SH'
 #!/bin/sh
+# Drop "-u USER --" like the real runuser.
+if [ "${1:-}" = "-u" ]; then shift 2; fi
+if [ "${1:-}" = "--" ]; then shift; fi
 if echo "$*" | grep -q pgbackrest; then
   [ -f /tmp/backup_fail ] && exit 1
   if echo "$*" | grep -q ' info'; then
@@ -102,6 +111,12 @@ expect_alerted_failure(){
   [ "$after" -gt "$before" ] || { echo "No alert emitted for $marker" >&2; exit 1; }
   printf '%s=PASS\n' "$field" >>/evidence/monitoring-fields.tmp
 }
+# Baseline: a healthy mock cluster must PASS (otherwise the failure cases
+# below would prove nothing).
+rm -f /tmp/node_fail /tmp/lag_fail /tmp/backup_fail
+if ! pgaegis monitor check --alert >/tmp/monitor.out 2>&1; then
+  echo "Healthy baseline unexpectedly failed" >&2; cat /tmp/monitor.out >&2; exit 1
+fi
 : >/evidence/monitoring-fields.tmp
 expect_alerted_failure backup_fail backup_failure_detected
 expect_alerted_failure lag_fail replication_lag_detected

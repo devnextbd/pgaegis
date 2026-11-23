@@ -90,7 +90,7 @@ fetch() {
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL --retry 3 --connect-timeout 15 --proto '=https' --tlsv1.2 "$url" -o "$destination"
   else
-    wget -qO "$destination" "$url"
+    wget --https-only --timeout=30 -qO "$destination" "$url"
   fi
 }
 
@@ -173,7 +173,36 @@ case "$PGAEGIS_RELEASE_VERSION" in
 esac
 
 BASE="https://github.com/$PGAEGIS_REPOSITORY/releases/download/v$PGAEGIS_RELEASE_VERSION"
-fetch "$BASE/SHA256SUMS" "$TMP/SHA256SUMS"
+
+# `pgaegis update` passes the SHA256SUMS it already verified so that this
+# installer never trusts a second, independently downloaded copy.
+if [ -n "${PGAEGIS_SHA256SUMS_FILE:-}" ]; then
+  cp "$PGAEGIS_SHA256SUMS_FILE" "$TMP/SHA256SUMS"
+else
+  fetch "$BASE/SHA256SUMS" "$TMP/SHA256SUMS"
+fi
+
+# Optional release signature verification (PGAEGIS_RELEASE_PUBKEY=/path/key.pub).
+if [ -n "${PGAEGIS_RELEASE_PUBKEY:-}" ]; then
+  command -v openssl >/dev/null 2>&1 || {
+    echo "openssl is required to verify the release signature" >&2
+    exit 1
+  }
+  if [ -n "${PGAEGIS_SHA256SUMS_SIG_FILE:-}" ]; then
+    cp "$PGAEGIS_SHA256SUMS_SIG_FILE" "$TMP/SHA256SUMS.sig"
+  else
+    fetch "$BASE/SHA256SUMS.sig" "$TMP/SHA256SUMS.sig" || {
+      echo "Release signature SHA256SUMS.sig not found; refusing install" >&2
+      exit 1
+    }
+  fi
+  if ! openssl dgst -sha256 -verify "$PGAEGIS_RELEASE_PUBKEY" \
+      -signature "$TMP/SHA256SUMS.sig" "$TMP/SHA256SUMS" >/dev/null 2>&1; then
+    echo "Release signature verification FAILED; refusing install" >&2
+    exit 1
+  fi
+  echo "Release signature verified."
+fi
 
 verify_file() {
   file="$1"
@@ -192,11 +221,19 @@ verify_file() {
   fi
 }
 
+# Returns 1 only when the asset does not exist (so a fallback can be tried).
+# A checksum mismatch EXITS the installer: this function is always called from
+# an `if`/`||` context where `set -e` is suspended, so a plain non-zero
+# return from verify_file would otherwise be ignored.
 download_asset() {
   name="$1"
   rm -f "$TMP/$name"
   if fetch "$BASE/$name" "$TMP/$name" 2>/dev/null; then
-    verify_file "$TMP/$name"
+    if ! verify_file "$TMP/$name"; then
+      rm -f "$TMP/$name"
+      echo "Refusing to install $name: SHA-256 verification failed" >&2
+      exit 1
+    fi
     return 0
   fi
   rm -f "$TMP/$name"

@@ -1,4 +1,5 @@
-use crate::{database, ui, util};
+use crate::{database, pg, ui};
+use crate::util::arg;
 
 pub fn dispatch(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
@@ -11,7 +12,7 @@ pub fn dispatch(args: &[String]) -> Result<(), String> {
 
 fn list() -> Result<(), String> {
     let sql = "SELECT rolname||'|'||rolcanlogin||'|'||rolsuper||'|'||rolcreatedb||'|'||rolcreaterole||'|'||rolreplication||'|'||COALESCE(rolconnlimit::text,'-1') FROM pg_roles ORDER BY rolname;";
-    let out = util::output("runuser", &["-u","postgres","--","psql","-Atqc",sql])?;
+    let out = pg::query("postgres",sql)?;
     let rows = out.lines().filter(|l| !l.trim().is_empty()).map(|line| {
         let p: Vec<&str> = line.split('|').collect();
         vec![
@@ -31,10 +32,10 @@ fn list() -> Result<(), String> {
 
 fn check(args: &[String]) -> Result<(), String> {
     let name = arg(args,"--name").ok_or("--name required")?;
-    database::validate_ident_public(name)?;
-    let lit = database::quote_literal_public(name);
+    pg::validate_ident(name)?;
+    let lit = pg::quote_literal(name);
     let sql = format!("SELECT rolname||'|'||rolcanlogin||'|'||rolsuper||'|'||rolcreatedb||'|'||rolcreaterole||'|'||rolreplication||'|'||COALESCE(rolvaliduntil::text,'never') FROM pg_roles WHERE rolname={lit};");
-    let out = util::output("runuser", &["-u","postgres","--","psql","-Atqc",&sql])?;
+    let out = pg::query("postgres",&sql)?;
     if out.trim().is_empty() { return Err(format!("role {name} does not exist")); }
     let p: Vec<&str> = out.split('|').collect();
     ui::card("PostgreSQL Role", &[
@@ -55,4 +56,3 @@ fn create(args: &[String]) -> Result<(), String> {
 }
 
 fn yesno(v:&str)->String { if v=="t" { ui::badge_ok("Yes") } else { ui::dim("No") } }
-fn arg<'a>(a:&'a[String],k:&str)->Option<&'a str>{a.iter().position(|x|x==k).and_then(|i|a.get(i+1)).map(String::as_str)}

@@ -122,4 +122,7 @@ printf \
   > "$CERT/pitr.env"
 
 chmod 0644 "$CERT/pitr.env"
+if [ -n "${PGAEGIS_EVIDENCE_UID:-}" ]; then
+  chown "${PGAEGIS_EVIDENCE_UID}:${PGAEGIS_EVIDENCE_GID:-$PGAEGIS_EVIDENCE_UID}" "$CERT"/pitr*.env "$CERT"/pitr*.log 2>/dev/null || true
+fi
 echo "Independent-host PITR drill PASS"

@@ -1,4 +1,5 @@
-use crate::{database, ui, util};
+use crate::{pg, ui};
+use crate::util::arg;
 
 pub fn dispatch(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
@@ -10,10 +11,10 @@ pub fn dispatch(args: &[String]) -> Result<(), String> {
 
 fn list(args: &[String]) -> Result<(), String> {
     let db=arg(args,"--db").ok_or("--db required")?;
-    database::validate_ident_public(db)?;
+    pg::validate_ident(db)?;
     let schema=arg(args,"--schema").unwrap_or("public");
-    database::validate_ident_public(schema)?;
-    let schema_lit=database::quote_literal_public(schema);
+    pg::validate_ident(schema)?;
+    let schema_lit=pg::quote_literal(schema);
     let sql=format!(r#"SELECT schemaname||'|'||relname||'|'||n_live_tup||'|'||pg_size_pretty(pg_total_relation_size(format('%I.%I',schemaname,relname)::regclass))||'|'||n_dead_tup||'|'||COALESCE(to_char(last_autovacuum,'YYYY-MM-DD HH24:MI'),'never')||'|'||COALESCE(to_char(last_analyze,'YYYY-MM-DD HH24:MI'),'never') FROM pg_stat_user_tables WHERE schemaname={schema_lit} ORDER BY pg_total_relation_size(format('%I.%I',schemaname,relname)::regclass) DESC;"#);
     let out=psql_db(db,&sql)?;
     let rows=out.lines().filter(|l|!l.trim().is_empty()).map(|line|{
@@ -35,8 +36,8 @@ fn list(args: &[String]) -> Result<(), String> {
 fn check(args:&[String])->Result<(),String>{
     let db=arg(args,"--db").ok_or("--db required")?; let table=arg(args,"--table").ok_or("--table required")?;
     let schema=arg(args,"--schema").unwrap_or("public");
-    for v in [db,table,schema]{database::validate_ident_public(v)?;}
-    let sl=database::quote_literal_public(schema); let tl=database::quote_literal_public(table);
+    for v in [db,table,schema]{pg::validate_ident(v)?;}
+    let sl=pg::quote_literal(schema); let tl=pg::quote_literal(table);
     let sql=format!(r#"SELECT schemaname||'|'||relname||'|'||n_live_tup||'|'||n_dead_tup||'|'||pg_size_pretty(pg_total_relation_size(format('%I.%I',schemaname,relname)::regclass))||'|'||COALESCE(to_char(last_vacuum,'YYYY-MM-DD HH24:MI'),'never')||'|'||COALESCE(to_char(last_autovacuum,'YYYY-MM-DD HH24:MI'),'never')||'|'||COALESCE(to_char(last_analyze,'YYYY-MM-DD HH24:MI'),'never')||'|'||COALESCE(to_char(last_autoanalyze,'YYYY-MM-DD HH24:MI'),'never') FROM pg_stat_user_tables WHERE schemaname={sl} AND relname={tl};"#);
     let out=psql_db(db,&sql)?; if out.trim().is_empty(){return Err(format!("table {schema}.{table} not found in {db}"));}
     let p:Vec<&str>=out.split('|').collect();
@@ -50,5 +51,4 @@ fn check(args:&[String])->Result<(),String>{
     Ok(())
 }
 
-fn psql_db(db:&str,sql:&str)->Result<String,String>{util::output("runuser", &["-u","postgres","--","psql","-d",db,"-Atqc",sql])}
-fn arg<'a>(a:&'a[String],k:&str)->Option<&'a str>{a.iter().position(|x|x==k).and_then(|i|a.get(i+1)).map(String::as_str)}
+fn psql_db(db:&str,sql:&str)->Result<String,String>{pg::query(db,sql)}

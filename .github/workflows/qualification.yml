@@ -1,0 +1,82 @@
+name: Qualification Labs
+
+# Reusable workflow shared by release.yml and production-certification.yml so
+# the HA / PITR / storage / monitoring labs are defined exactly once.
+on:
+  workflow_call:
+    inputs:
+      evidence-suffix:
+        description: Suffix for uploaded evidence artifact names (e.g. release, certification)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  ha-qualification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
+      - run: cargo build --release --locked
+      - run: PGAEGIS_DISPOSABLE_LAB=YES bash tests/ha/lab/run-e2e.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ha-${{ inputs.evidence-suffix }}-evidence
+          path: tests/ha/lab/evidence/
+          if-no-files-found: warn
+
+  pitr-qualification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash tests/cert/run-pitr-lab.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pitr-${{ inputs.evidence-suffix }}-evidence
+          path: tests/cert/evidence/
+          if-no-files-found: warn
+
+  storage-qualification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build certification image
+        run: docker build -t pgaegis-cert -f tests/cert/Dockerfile.cert tests/cert
+      - name: Run storage fault qualification
+        run: |
+          mkdir -p tests/cert/evidence
+          docker run --rm --privileged \
+            -v "$PWD/tests/cert/evidence:/evidence" \
+            -e PGAEGIS_DISPOSABLE_VM=YES \
+            -e PGAEGIS_CERT_DIR=/evidence \
+            -e PGAEGIS_EVIDENCE_UID="$(id -u)" \
+            -e PGAEGIS_EVIDENCE_GID="$(id -g)" \
+            pgaegis-cert \
+            /usr/local/bin/storage-faults
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: storage-${{ inputs.evidence-suffix }}-evidence
+          path: tests/cert/evidence/
+          if-no-files-found: warn
+
+  monitoring-qualification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
+      - run: cargo build --release --locked
+      - run: bash tests/cert/monitoring-faults.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: monitoring-${{ inputs.evidence-suffix }}-evidence
+          path: tests/cert/evidence/monitoring-faults.env
+          if-no-files-found: warn
