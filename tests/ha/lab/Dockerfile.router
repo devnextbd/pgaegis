@@ -1,7 +1,24 @@
 FROM debian:13
-RUN apt-get update && apt-get install -y haproxy pgbouncer postgresql-client curl && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      haproxy \
+      pgbouncer \
+      postgresql-client \
+      curl \
+      passwd && \
+    if ! id -u pgbouncer >/dev/null 2>&1; then \
+      useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin pgbouncer; \
+    fi && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY haproxy.cfg /etc/haproxy/haproxy.cfg
 COPY pgbouncer.ini /etc/pgbouncer/pgbouncer.ini
 COPY router-entrypoint.sh /usr/local/bin/router-entrypoint
-RUN chmod +x /usr/local/bin/router-entrypoint && printf '"postgres" "postgres"\n' >/etc/pgbouncer/userlist.txt
+
+RUN chmod 0755 /usr/local/bin/router-entrypoint && \
+    printf '"postgres" "postgres"\n' >/etc/pgbouncer/userlist.txt && \
+    chown root:pgbouncer /etc/pgbouncer/userlist.txt && \
+    chmod 0640 /etc/pgbouncer/userlist.txt
+
 ENTRYPOINT ["/usr/local/bin/router-entrypoint"]

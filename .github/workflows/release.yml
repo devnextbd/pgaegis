@@ -137,6 +137,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: bash tests/cert/run-pitr-lab.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pitr-release-evidence
+          path: tests/cert/evidence/
 
   storage-qualification:
     runs-on: ubuntu-latest
@@ -155,6 +160,11 @@ jobs:
             -e PGAEGIS_CERT_DIR=/evidence \
             pgaegis-cert \
             /usr/local/bin/storage-faults
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: storage-release-evidence
+          path: tests/cert/evidence/
 
   monitoring-qualification:
     runs-on: ubuntu-latest
