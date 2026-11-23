@@ -146,13 +146,23 @@ if [ "$PGAEGIS_RELEASE_VERSION" != "latest" ]; then
 fi
 
 if [ "$PGAEGIS_RELEASE_VERSION" = "latest" ]; then
-  fetch "https://api.github.com/repos/$PGAEGIS_REPOSITORY/releases/latest" "$TMP/release.json"
-  VERSION="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^\"]*\)".*/\1/p' "$TMP/release.json" | head -n 1)"
-  VERSION="${PGAEGIS_RELEASE_VERSION#v}"
-  [ -n "$PGAEGIS_RELEASE_VERSION" ] || {
-    echo "Unable to determine the latest pgaegis release" >&2
-    exit 1
+  if ! fetch "https://api.github.com/repos/$PGAEGIS_REPOSITORY/releases/latest" "$TMP/release.json"; then
+    echo "No published pgaegis GitHub Release was found for $PGAEGIS_REPOSITORY." >&2
+    echo "Create and publish a version tag/release first (for example v1.0.0)." >&2
+    echo "The installer intentionally installs signed/checksummed release artifacts, not source from main." >&2
+    exit 3
+  fi
+
+  release_tag="$(
+    sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^\"]*\)".*/\1/p'       "$TMP/release.json"       | head -n 1
+  )"
+
+  [ -n "$release_tag" ] || {
+    echo "Unable to determine the latest pgaegis release tag." >&2
+    exit 3
   }
+
+  PGAEGIS_RELEASE_VERSION="${release_tag#v}"
 fi
 
 case "$PGAEGIS_RELEASE_VERSION" in
