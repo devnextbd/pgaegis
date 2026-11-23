@@ -6,6 +6,11 @@ set -Eeuo pipefail
   exit 2
 }
 
+# Never fail silently: report the exact line and command that failed.
+trap 'echo "ERROR: run-e2e.sh line $LINENO: \`$BASH_COMMAND\` failed (exit $?)" >&2' ERR
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE"
 
@@ -222,7 +227,7 @@ psql_retry() {
 
   for i in $(seq 1 30); do
     if docker compose exec -T router \
-      psql "$sql_dsn" -v ON_ERROR_STOP=1 -c "$sql"
+      timeout 10 psql "$sql_dsn" -v ON_ERROR_STOP=1 -c "$sql"
     then
       return 0
     fi
@@ -242,7 +247,7 @@ psql_scalar_retry() {
   for i in $(seq 1 30); do
     value="$(
       docker compose exec -T router \
-        psql "$sql_dsn" -Atc "$sql" \
+        timeout 10 psql "$sql_dsn" -Atc "$sql" \
         2>/dev/null || true
     )"
 
@@ -281,8 +286,8 @@ wait_sql_stable
 psql_retry \
   'create table if not exists pgaegis_cert(id bigint primary key, created_at timestamptz default now()); insert into pgaegis_cert values (1,now()) on conflict do nothing;'
 
-initial_leader="$(leader_name)"
-[ -n "$initial_leader" ]
+initial_leader="$(leader_name || true)"
+[ -n "$initial_leader" ] || fail "no Patroni leader found before failover test"
 
 commit_log="$HERE/evidence/committed-write-ids.txt"
 : > "$commit_log"
@@ -305,7 +310,14 @@ commit_log="$HERE/evidence/committed-write-ids.txt"
 ) &
 writer_pid=$!
 
-sleep 2
+# Wait until the writer has CONFIRMED commits before killing the leader. A
+# fixed short sleep is flaky on slow CI runners (docker exec can take >1s per
+# insert), which leaves zero confirmed commits and nothing to measure RPO on.
+warm_deadline=$(( $(date +%s) + 60 ))
+while [ "$(wc -l < "$commit_log" | tr -d ' ')" -lt 5 ]; do
+  [ "$(date +%s)" -lt "$warm_deadline" ] || fail "writer confirmed fewer than 5 commits in 60s before failover (write path unhealthy)"
+  sleep 0.5
+done
 
 start="$(date +%s)"
 docker compose kill -s SIGKILL "$initial_leader"
@@ -319,20 +331,22 @@ sleep 2
 kill "$writer_pid" >/dev/null 2>&1 || true
 wait "$writer_pid" 2>/dev/null || true
 
-rows="$(psql_scalar_retry 'select count(*) from pgaegis_cert where id=1')"
-[ "$rows" = 1 ]
+rows="$(psql_scalar_retry 'select count(*) from pgaegis_cert where id=1' || true)"
+[ "$rows" = 1 ] || fail "baseline row id=1 not readable after failover (got '${rows}')"
 
 confirmed="$(wc -l < "$commit_log" | tr -d ' ')"
-[ "$confirmed" -gt 0 ]
+[ "$confirmed" -gt 0 ] || fail "no confirmed commits recorded during failover test"
 
 ids="$(paste -sd, "$commit_log")"
 present="$(
   psql_scalar_retry \
-    "select count(*) from pgaegis_cert where id in ($ids)"
+    "select count(*) from pgaegis_cert where id in ($ids)" || true
 )"
+[ -n "$present" ] || fail "could not count confirmed rows after failover"
 
 lost=$((confirmed - present))
-[ "$lost" -eq 0 ]
+[ "$lost" -eq 0 ] || fail "RPO violation: $lost of $confirmed acknowledged commits missing after failover"
+echo "Failover: RTO=${rto}s, confirmed commits=${confirmed}, lost=${lost}"
 
 printf \
   'status=PASS\nrto_seconds=%s\nlost_committed_rows=%s\nconfirmed_commits=%s\ntested_at=%s\ntested_epoch=%s\n' \
@@ -366,7 +380,8 @@ docker compose exec -T "$initial_leader" \
 # usually has no divergent WAL and Patroni correctly rejoins it WITHOUT a
 # rewind. pg_rewind is proven deterministically in the partition phase below.
 
-partitioned_leader="$(leader_name)"
+partitioned_leader="$(leader_name || true)"
+[ -n "$partitioned_leader" ] || fail "no leader found before partition test"
 
 net="$(
   docker inspect \
@@ -399,8 +414,8 @@ isolated_writable="$(
     2>/dev/null || true
 )"
 
-[ "$isolated_writable" != t ]
-[ "$(count_writable)" -le 1 ]
+[ "$isolated_writable" != t ] || fail "SPLIT-BRAIN: isolated old primary $partitioned_leader is still writable"
+[ "$(count_writable)" -le 1 ] || fail "SPLIT-BRAIN: more than one writable node during partition"
 
 printf \
   'status=PASS\nsplit_brain=0\nisolated_old_primary_writable=0\ntested_at=%s\ntested_epoch=%s\n' \
@@ -441,11 +456,12 @@ fi
 diverged_rows="$(psql_scalar_retry "select count(*) from pgaegis_cert where id=$diverge_id")"
 [ "$diverged_rows" = 0 ] || { echo "Divergent row $diverge_id survived on the cluster after rewind" >&2; exit 1; }
 
-dcs_leader="$(leader_name)"
+dcs_leader="$(leader_name || true)"
+[ -n "$dcs_leader" ] || fail "no leader found before DCS quorum test"
 docker compose stop etcd2 etcd3
 sleep 20
 
-[ "$(count_writable)" -le 1 ]
+[ "$(count_writable)" -le 1 ] || fail "more than one writable node after etcd quorum loss"
 
 docker compose stop "$dcs_leader"
 sleep 20
@@ -464,13 +480,14 @@ for n in pg1 pg2 pg3; do
   fi
 done
 
-[ "$remaining_writable" -eq 0 ]
+[ "$remaining_writable" -eq 0 ] || fail "a node became writable without DCS quorum ($remaining_writable writable)"
 
 docker compose start etcd2 etcd3 "$dcs_leader"
 wait_cluster_ready
 wait_sql_stable
 
-current_leader="$(leader_name)"
+current_leader="$(leader_name || true)"
+[ -n "$current_leader" ] || fail "no leader found before planned switchover"
 # With synchronous_mode(_strict) Patroni only allows switchover to the
 # synchronous standby (HTTP 412 otherwise). Patroni REST /sync returns 200
 # only on the sync standby; wait for one to be assigned after the DCS test.
@@ -494,7 +511,7 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 
-[ "$(leader_name)" = "$candidate" ]
+[ "$(leader_name || true)" = "$candidate" ] || fail "planned switchover did not make $candidate the leader"
 wait_sql_stable
 
 for n in pg1 pg2 pg3; do
@@ -511,7 +528,8 @@ for n in pg1 pg2 pg3; do
   docker compose exec -T "$n" \
     psql -U postgres -Atc \
     'select count(*) from pgaegis_cert where id=2' \
-    2>/dev/null | grep -qx 1
+    2>/dev/null | grep -qx 1 \
+    || fail "row id=2 did not replicate to $n"
 done
 
 printf \
