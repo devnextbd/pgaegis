@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 
-REPO="${PGAEGIS_REPO:-devnextbd/pgaegis}"
-VERSION="${PGAEGIS_VERSION:-latest}"
-FAMILY_OVERRIDE="${PGAEGIS_PACKAGE_FAMILY:-auto}"
+PGAEGIS_REPOSITORY="${PGAEGIS_REPO:-devnextbd/pgaegis}"
+PGAEGIS_RELEASE_VERSION="${PGAEGIS_VERSION:-latest}"
+PGAEGIS_FAMILY_OVERRIDE="${PGAEGIS_PACKAGE_FAMILY:-auto}"
 
 if [ "$(uname -s 2>/dev/null || true)" != "Linux" ]; then
   echo "pgaegis installer supports Linux only" >&2
@@ -11,12 +11,27 @@ if [ "$(uname -s 2>/dev/null || true)" != "Linux" ]; then
 fi
 
 if [ -r /etc/os-release ]; then
-  # shellcheck disable=SC1091
-  . /etc/os-release
+  OS_ID="$(
+    . /etc/os-release
+    printf '%s' "${ID:-unknown}"
+  )"
+  OS_ID_LIKE="$(
+    . /etc/os-release
+    printf '%s' "${ID_LIKE:-}"
+  )"
+  OS_VERSION_ID="$(
+    . /etc/os-release
+    printf '%s' "${VERSION_ID:-}"
+  )"
+  OS_PRETTY_NAME="$(
+    . /etc/os-release
+    printf '%s' "${PRETTY_NAME:-${ID:-unknown}}"
+  )"
 else
-  ID="unknown"
-  ID_LIKE=""
-  VERSION_ID=""
+  OS_ID="unknown"
+  OS_ID_LIKE=""
+  OS_VERSION_ID=""
+  OS_PRETTY_NAME="unknown Linux"
 fi
 
 as_root() {
@@ -30,7 +45,7 @@ as_root() {
   fi
 }
 
-os_tokens=" ${ID:-unknown} ${ID_LIKE:-} "
+os_tokens=" $OS_ID $OS_ID_LIKE "
 
 detect_family() {
   case "$os_tokens" in
@@ -113,11 +128,11 @@ case "$MACHINE" in
     ;;
 esac
 
-case "$FAMILY_OVERRIDE" in
+case "$PGAEGIS_FAMILY_OVERRIDE" in
   auto) family="$(detect_family)" ;;
-  deb|rpm|arch|generic) family="$FAMILY_OVERRIDE" ;;
+  deb|rpm|arch|generic) family="$PGAEGIS_FAMILY_OVERRIDE" ;;
   *)
-    echo "Invalid PGAEGIS_PACKAGE_FAMILY=$FAMILY_OVERRIDE (use auto, deb, rpm, arch, generic)" >&2
+    echo "Invalid PGAEGIS_PACKAGE_FAMILY=$PGAEGIS_FAMILY_OVERRIDE (use auto, deb, rpm, arch, generic)" >&2
     exit 1
     ;;
 esac
@@ -126,24 +141,28 @@ TMP="$(mktemp -d)"
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT HUP INT TERM
 
-if [ "$VERSION" = "latest" ]; then
-  fetch "https://api.github.com/repos/$REPO/releases/latest" "$TMP/release.json"
+if [ "$PGAEGIS_RELEASE_VERSION" != "latest" ]; then
+  PGAEGIS_RELEASE_VERSION="${PGAEGIS_RELEASE_VERSION#v}"
+fi
+
+if [ "$PGAEGIS_RELEASE_VERSION" = "latest" ]; then
+  fetch "https://api.github.com/repos/$PGAEGIS_REPOSITORY/releases/latest" "$TMP/release.json"
   VERSION="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^\"]*\)".*/\1/p' "$TMP/release.json" | head -n 1)"
-  VERSION="${VERSION#v}"
-  [ -n "$VERSION" ] || {
+  VERSION="${PGAEGIS_RELEASE_VERSION#v}"
+  [ -n "$PGAEGIS_RELEASE_VERSION" ] || {
     echo "Unable to determine the latest pgaegis release" >&2
     exit 1
   }
 fi
 
-case "$VERSION" in
+case "$PGAEGIS_RELEASE_VERSION" in
   ''|*[!0-9A-Za-z.-]*)
-    echo "Invalid version: $VERSION" >&2
+    echo "Invalid version: $PGAEGIS_RELEASE_VERSION" >&2
     exit 1
     ;;
 esac
 
-BASE="https://github.com/$REPO/releases/download/v$VERSION"
+BASE="https://github.com/$PGAEGIS_REPOSITORY/releases/download/v$PGAEGIS_RELEASE_VERSION"
 fetch "$BASE/SHA256SUMS" "$TMP/SHA256SUMS"
 
 verify_file() {
@@ -175,7 +194,7 @@ download_asset() {
 }
 
 install_generic() {
-  name="pgaegis_${VERSION}_linux_${GEN_ARCH}.tar.gz"
+  name="pgaegis_${PGAEGIS_RELEASE_VERSION}_linux_${GEN_ARCH}.tar.gz"
   download_asset "$name" || {
     echo "No compatible generic release asset for Linux/$GEN_ARCH" >&2
     exit 2
@@ -192,15 +211,15 @@ install_generic() {
 }
 
 printf 'pgaegis installer\n'
-printf '  repository : %s\n' "$REPO"
-printf '  version    : %s\n' "$VERSION"
-printf '  distro     : %s %s\n' "${PRETTY_NAME:-${ID:-unknown}}" "${VERSION_ID:-}"
+printf '  repository : %s\n' "$PGAEGIS_REPOSITORY"
+printf '  version    : %s\n' "$PGAEGIS_RELEASE_VERSION"
+printf '  distro     : %s %s\n' "$OS_PRETTY_NAME" "$OS_VERSION_ID"
 printf '  family     : %s\n' "$family"
 printf '  arch       : %s\n' "$MACHINE"
 
 case "$family" in
   deb)
-    name="pgaegis_${VERSION}_${DEB_ARCH}.deb"
+    name="pgaegis_${PGAEGIS_RELEASE_VERSION}_${DEB_ARCH}.deb"
     if download_asset "$name"; then
       command -v apt-get >/dev/null 2>&1 || {
         echo "Detected Debian-family Linux but apt-get is unavailable" >&2
@@ -213,7 +232,7 @@ case "$family" in
     fi
     ;;
   rpm)
-    name="pgaegis-${VERSION}-1.${RPM_ARCH}.rpm"
+    name="pgaegis-${PGAEGIS_RELEASE_VERSION}-1.${RPM_ARCH}.rpm"
     if download_asset "$name"; then
       # Release assets are integrity-checked above with SHA-256. The project
       # does not yet publish a distro-trusted RPM signing key, so local RPM
@@ -238,7 +257,7 @@ case "$family" in
     fi
     ;;
   arch)
-    name="pgaegis-${VERSION}-1-${ARCH_ARCH}.pkg.tar.zst"
+    name="pgaegis-${PGAEGIS_RELEASE_VERSION}-1-${ARCH_ARCH}.pkg.tar.zst"
     if download_asset "$name"; then
       command -v pacman >/dev/null 2>&1 || {
         echo "Detected Arch-family Linux but pacman is unavailable" >&2
@@ -256,5 +275,5 @@ case "$family" in
 esac
 
 installed_version="$(pgaegis version 2>/dev/null || true)"
-printf '\nInstalled successfully: %s\n' "${installed_version:-pgaegis $VERSION}"
+printf '\nInstalled successfully: %s\n' "${installed_version:-pgaegis $PGAEGIS_RELEASE_VERSION}"
 printf 'Try:\n  pgaegis about\n  pgaegis doctor\n  sudo pgaegis\n'
