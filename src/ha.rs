@@ -304,9 +304,22 @@ pub fn audit()->Result<(),String>{
     if failures.is_empty() { ui::success("HA AUDIT: PASS"); Ok(()) } else { for f in &failures { ui::error(f); } Err(format!("HA audit failed: {} issue(s)",failures.len())) }
 }
 
+/// With synchronous_mode, Patroni only accepts the synchronous standby as a
+/// switchover candidate (HTTP 412 otherwise); check up front with a clear hint.
+pub fn check_switchover_candidate(members:&[Member],candidate:&str)->Result<(),String>{
+    let m=members.iter().find(|m|m.name==candidate).ok_or_else(||format!("candidate {candidate} is not a member of the cluster"))?;
+    if m.is_leader() { return Err(format!("{candidate} is already the leader")); }
+    let syncs:Vec<&str>=members.iter().filter(|m|m.role.to_ascii_lowercase().contains("sync standby")).map(|m|m.name.as_str()).collect();
+    if !syncs.is_empty() && !syncs.contains(&candidate) {
+        return Err(format!("synchronous mode is enabled: only the sync standby can be a switchover candidate (use --candidate {})",syncs.join(" or ")));
+    }
+    Ok(())
+}
+
 fn switchover(args:&[String])->Result<(),String>{
     util::require_root()?; audit()?; let cfg=Config::load(); let candidate=arg(args,"--candidate").ok_or("--candidate required")?;
     util::validate_safe_name("--candidate",candidate)?;
+    check_switchover_candidate(&patroni_members(&cfg)?,candidate)?;
     util::status("patronictl", &["-c",&cfg.patroni_config,"switchover",&cfg.cluster_name,"--candidate",candidate,"--force"])
 }
 
@@ -379,6 +392,16 @@ mod tests {
         assert!(topology_failures(&bad).iter().any(|f|f.contains("pg10")));
         let standby_leader=Member{name:"x".into(),host:"".into(),role:"Standby Leader".into(),state:"running".into(),tl:"".into(),lag:"".into()};
         assert!(!standby_leader.is_leader() && !standby_leader.is_replica());
+    }
+
+    #[test]
+    fn switchover_candidate_must_be_sync_standby() {
+        let m=parse_members(LIST).unwrap();
+        assert!(check_switchover_candidate(&m,"pg2").is_ok());
+        let e=check_switchover_candidate(&m,"pg10").unwrap_err();
+        assert!(e.contains("--candidate pg2"));
+        assert!(check_switchover_candidate(&m,"pg1").is_err());
+        assert!(check_switchover_candidate(&m,"nope").is_err());
     }
 
     #[test]

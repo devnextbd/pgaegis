@@ -101,6 +101,25 @@ replica_name_except() {
   return 1
 }
 
+sync_standby_name_except() {
+  local exclude="$1"
+  local n
+
+  for n in pg1 pg2 pg3; do
+    [ "$n" = "$exclude" ] && continue
+
+    docker compose exec -T "$n" \
+      curl -fsS http://127.0.0.1:8008/sync \
+      >/dev/null 2>&1 \
+      && {
+        echo "$n"
+        return 0
+      }
+  done
+
+  return 1
+}
+
 replica_count() {
   local count=0
   local n
@@ -416,8 +435,16 @@ wait_cluster_ready
 wait_sql_stable
 
 current_leader="$(leader_name)"
-candidate="$(replica_name_except "$current_leader")"
-[ -n "$candidate" ]
+# With synchronous_mode(_strict) Patroni only allows switchover to the
+# synchronous standby (HTTP 412 otherwise). Patroni REST /sync returns 200
+# only on the sync standby; wait for one to be assigned after the DCS test.
+candidate=""
+for _ in $(seq 1 60); do
+  candidate="$(sync_standby_name_except "$current_leader" || true)"
+  [ -n "$candidate" ] && break
+  sleep 2
+done
+[ -n "$candidate" ] || { echo "No synchronous standby available for planned switchover" >&2; exit 1; }
 
 docker compose exec -T "$candidate" \
   /opt/patroni/bin/patronictl \
