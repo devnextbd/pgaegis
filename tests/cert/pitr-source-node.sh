@@ -62,6 +62,11 @@ runuser -u postgres -- pgbackrest --stanza=main check
 # The full backup intentionally precedes the target rows, so PITR must replay WAL.
 runuser -u postgres -- \
   pgbackrest --stanza=main --type=full backup
+# pgBackRest stores the backup stop time with 1-second resolution and picks a
+# backup set with stop time strictly LESS than the (second-truncated) target.
+# Make sure the target is at least one full second after the backup stopped,
+# otherwise restore fails with "[075] unable to find backup set".
+backup_done_epoch="$(date +%s)"
 
 runuser -u postgres -- \
   psql -d postgres -v ON_ERROR_STOP=1 <<'SQL'
@@ -79,6 +84,8 @@ SQL
 # Synchronous archiving + pgBackRest check means WAL containing 910001 is
 # definitely durable in the repository before the target timestamp is recorded.
 runuser -u postgres -- pgbackrest --stanza=main check
+
+while [ "$(date +%s)" -le "$((backup_done_epoch + 1))" ]; do sleep 0.2; done
 
 TARGET_TIME="$(
   runuser -u postgres -- \

@@ -154,18 +154,33 @@ wait_haproxy_writer() {
   return 1
 }
 
+dump_routing_state() {
+  echo "--- Patroni view (first reachable member) ---" >&2
+  local n
+  for n in pg1 pg2 pg3; do
+    docker compose exec -T "$n" \
+      /opt/patroni/bin/patronictl -c /etc/patroni/patroni.yml list \
+      >&2 2>/dev/null && break
+  done
+  echo "--- PgBouncer -> HAProxy probe ---" >&2
+  docker compose exec -T router \
+    timeout 5 psql "$sql_dsn" -Atc 'select 1' >&2 2>&1 || true
+}
+
+# Time-based deadline (not an iteration count) and a hard per-probe timeout:
+# a probe that hangs on a stale connection must not stall the wait.
 wait_sql_stable() {
-  local i
+  local deadline=$(( $(date +%s) + ${PGAEGIS_FAILOVER_WAIT_SECONDS:-180} ))
   local consecutive=0
 
-  for i in $(seq 1 120); do
+  while [ "$(date +%s)" -lt "$deadline" ]; do
     if ! router_running; then
       echo "Router exited while waiting for PgBouncer writer" >&2
       return 1
     fi
 
     if docker compose exec -T router \
-      psql "$sql_dsn" -Atc 'select 1' \
+      timeout 5 psql "$sql_dsn" -Atc 'select 1' \
       >/dev/null 2>&1
     then
       consecutive=$((consecutive + 1))
@@ -178,6 +193,7 @@ wait_sql_stable() {
   done
 
   echo "PgBouncer writer endpoint did not stabilize" >&2
+  dump_routing_state
   return 1
 }
 
@@ -257,7 +273,7 @@ commit_log="$HERE/evidence/committed-write-ids.txt"
 
   while :; do
     if docker compose exec -T router \
-      psql "$sql_dsn" -v ON_ERROR_STOP=1 -Atc \
+      timeout 5 psql "$sql_dsn" -v ON_ERROR_STOP=1 -Atc \
       "insert into pgaegis_cert(id) values ($i) on conflict do nothing returning id" \
       2>/dev/null | grep -qx "$i"
     then
