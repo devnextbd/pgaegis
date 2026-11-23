@@ -3,6 +3,5 @@ set -Eeuo pipefail
 
 haproxy -f /etc/haproxy/haproxy.cfg -D
 
-# PgBouncer must not stay privileged.  The -u option is the native
-# PgBouncer mechanism for dropping privileges after startup.
+# Drop privileges using PgBouncer's native -u option.
 exec pgbouncer -u pgbouncer /etc/pgbouncer/pgbouncer.ini

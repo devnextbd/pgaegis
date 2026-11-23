@@ -10,6 +10,8 @@ permissions:
 env:
   NODE_VERSION: "26.13.1"
   RUST_VERSION: "1.100.0"
+  DEBIAN_SUPPORTED: "13.x (current 13.8)"
+  UBUNTU_SUPPORTED: "26.04 LTS (current 26.04.1)"
 
 jobs:
   rust-quality:
@@ -142,6 +144,7 @@ jobs:
         with:
           name: pitr-release-evidence
           path: tests/cert/evidence/
+          if-no-files-found: warn
 
   storage-qualification:
     runs-on: ubuntu-latest
@@ -165,6 +168,7 @@ jobs:
         with:
           name: storage-release-evidence
           path: tests/cert/evidence/
+          if-no-files-found: warn
 
   monitoring-qualification:
     runs-on: ubuntu-latest

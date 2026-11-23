@@ -56,13 +56,10 @@ runuser -u postgres -- \
 
 trap 'runuser -u postgres -- "$PG_BIN/pg_ctl" -D "$DATA" -m fast -w stop >/dev/null 2>&1 || true' EXIT
 
-runuser -u postgres -- \
-  pgbackrest --stanza=main stanza-create
+runuser -u postgres -- pgbackrest --stanza=main stanza-create
+runuser -u postgres -- pgbackrest --stanza=main check
 
-runuser -u postgres -- \
-  pgbackrest --stanza=main check
-
-# The base backup must precede the recovery target so WAL replay is exercised.
+# The full backup intentionally precedes the target rows, so PITR must replay WAL.
 runuser -u postgres -- \
   pgbackrest --stanza=main --type=full backup
 
@@ -71,7 +68,7 @@ runuser -u postgres -- \
 CREATE TABLE IF NOT EXISTS public.pgaegis_pitr_cert(
     id integer primary key,
     note text,
-    created_at timestamptz default now()
+    created_at timestamptz default clock_timestamp()
 );
 DELETE FROM public.pgaegis_pitr_cert WHERE id IN (910001,910002);
 INSERT INTO public.pgaegis_pitr_cert(id,note)
@@ -79,12 +76,9 @@ VALUES (910001,'must-exist-at-target');
 SELECT pg_switch_wal();
 SQL
 
-# archive-async=n makes archive_command completion mean the WAL has reached the
-# repository.  pgBackRest check forces/verifies another archive round-trip, so
-# all prior WAL containing the first marker must be safely available before
-# we record the PITR target.
-runuser -u postgres -- \
-  pgbackrest --stanza=main check
+# Synchronous archiving + pgBackRest check means WAL containing 910001 is
+# definitely durable in the repository before the target timestamp is recorded.
+runuser -u postgres -- pgbackrest --stanza=main check
 
 TARGET_TIME="$(
   runuser -u postgres -- \
@@ -95,7 +89,8 @@ TARGET_TIME="$(
 printf '%s\n' "$TARGET_TIME" > "$STATE/target_time"
 hostname > "$STATE/source_host"
 
-sleep 2
+# Ensure the second transaction is strictly after the recovery target.
+sleep 1
 
 runuser -u postgres -- \
   psql -d postgres -v ON_ERROR_STOP=1 <<'SQL'
@@ -104,11 +99,7 @@ VALUES (910002,'must-not-exist-at-target');
 SELECT pg_switch_wal();
 SQL
 
-# Ensure WAL containing the post-target marker is also in the repository
-# before the source container disappears.  The restore must then stop at the
-# target boundary rather than succeeding only because newer WAL was missing.
-runuser -u postgres -- \
-  pgbackrest --stanza=main check
-
-runuser -u postgres -- \
-  pgbackrest --stanza=main info >/dev/null
+# Archive the post-target WAL too. The restore must stop because of the target,
+# not because newer WAL is absent.
+runuser -u postgres -- pgbackrest --stanza=main check
+runuser -u postgres -- pgbackrest --stanza=main info >/dev/null

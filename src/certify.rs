@@ -95,15 +95,11 @@ fn tls_permissions(cfg:&Config,role:&str)->bool{
     for p in group_read {if !safe_mode(p,true){return false;}}
     for (cert,key) in pairs {if !cert_key_match(cert,key){return false;}}
     for (ca,cert) in chains {if !cert_chain_ok(ca,cert){return false;}}
-    if (role == "all" || role == "router")
-        && !cert_key_match(
+    (role != "all" && role != "router")
+        || cert_key_match(
             "/etc/haproxy/tls/patroni-client.pem",
             "/etc/haproxy/tls/patroni-client.pem",
         )
-    {
-        return false;
-    }
-    true
 }
 
 fn safe_mode(path:&str,allow_group_read:bool)->bool{
