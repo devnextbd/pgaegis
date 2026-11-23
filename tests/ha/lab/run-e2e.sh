@@ -361,12 +361,10 @@ docker compose exec -T "$initial_leader" \
   curl -fsS http://127.0.0.1:8008/replica \
   >/dev/null
 
-if ! docker compose logs "$initial_leader" 2>&1 \
-  | grep -Eiq 'pg_rewind|rewind(ed|ing)?'
-then
-  echo "Former primary rejoined, but pg_rewind evidence was not found" >&2
-  exit 1
-fi
+# NOTE: no pg_rewind assertion here. With synchronous_mode_strict every
+# commit reached the sync standby before the SIGKILL, so the old primary
+# usually has no divergent WAL and Patroni correctly rejoins it WITHOUT a
+# rewind. pg_rewind is proven deterministically in the partition phase below.
 
 partitioned_leader="$(leader_name)"
 
@@ -379,6 +377,18 @@ net="$(
 docker network disconnect \
   "$net" \
   "$(docker compose ps -q "$partitioned_leader")"
+
+# Create WAL that exists ONLY on the isolated primary: synchronous_commit=local
+# commits without waiting for the (unreachable) sync standby. When the node
+# rejoins, this divergence forces Patroni to run pg_rewind.
+diverge_id=900001
+if ! docker compose exec -T "$partitioned_leader" \
+  timeout 10 psql -U postgres -v ON_ERROR_STOP=1 -qc \
+  "SET synchronous_commit = local; INSERT INTO pgaegis_cert(id) VALUES ($diverge_id);"
+then
+  echo "Could not create divergent WAL on the isolated primary (needed to prove pg_rewind)" >&2
+  exit 1
+fi
 
 sleep 40
 
@@ -398,12 +408,38 @@ printf \
   "$(date +%s)" \
   > evidence/split-brain.env
 
+rewind_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 docker network connect \
   "$net" \
   "$(docker compose ps -q "$partitioned_leader")" || true
 
 sleep 20
 wait_sql_stable
+
+# The diverged former primary must come back as a replica via pg_rewind, and
+# its local-only row must be gone (it was never part of the new timeline).
+rejoined=0
+for _ in $(seq 1 90); do
+  if docker compose exec -T "$partitioned_leader" \
+    curl -fsS http://127.0.0.1:8008/replica >/dev/null 2>&1
+  then
+    rejoined=1
+    break
+  fi
+  sleep 2
+done
+[ "$rejoined" -eq 1 ] || { echo "Diverged former primary did not rejoin as replica" >&2; exit 1; }
+
+if ! docker compose logs --since "$rewind_since" "$partitioned_leader" 2>&1 \
+  | grep -Eiq 'running pg_rewind|pg_rewind exit code=0|rewind'
+then
+  echo "Diverged former primary rejoined, but no pg_rewind run was logged" >&2
+  docker compose logs --since "$rewind_since" "$partitioned_leader" 2>&1 | tail -60 >&2 || true
+  exit 1
+fi
+
+diverged_rows="$(psql_scalar_retry "select count(*) from pgaegis_cert where id=$diverge_id")"
+[ "$diverged_rows" = 0 ] || { echo "Divergent row $diverge_id survived on the cluster after rewind" >&2; exit 1; }
 
 dcs_leader="$(leader_name)"
 docker compose stop etcd2 etcd3
