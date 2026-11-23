@@ -445,13 +445,20 @@ for _ in $(seq 1 90); do
 done
 [ "$rejoined" -eq 1 ] || { echo "Diverged former primary did not rejoin as replica" >&2; exit 1; }
 
-if ! docker compose logs --since "$rewind_since" "$partitioned_leader" 2>&1 \
-  | grep -Eiq 'running pg_rewind|pg_rewind exit code=0|rewind'
-then
+# Save the log to a file first. Piping `docker compose logs` straight into
+# `grep -q` breaks under `set -o pipefail`: grep exits on the first match, the
+# still-writing producer gets SIGPIPE, and the pipeline reports failure even
+# though the match was found.
+rewind_log="$HERE/evidence/${partitioned_leader}-rejoin.log"
+docker compose logs --no-color --since "$rewind_since" "$partitioned_leader" \
+  > "$rewind_log" 2>&1 || true
+
+if ! grep -Eiq 'running pg_rewind|pg_rewind exit code=0|servers diverged|rewind' "$rewind_log"; then
   echo "Diverged former primary rejoined, but no pg_rewind run was logged" >&2
-  docker compose logs --since "$rewind_since" "$partitioned_leader" 2>&1 | tail -60 >&2 || true
+  tail -80 "$rewind_log" >&2 || true
   exit 1
 fi
+echo "pg_rewind evidence: $(grep -Ei 'running pg_rewind|pg_rewind exit code|servers diverged' "$rewind_log" | head -3 | tr '\n' ' ')"
 
 diverged_rows="$(psql_scalar_retry "select count(*) from pgaegis_cert where id=$diverge_id")"
 [ "$diverged_rows" = 0 ] || { echo "Divergent row $diverge_id survived on the cluster after rewind" >&2; exit 1; }
