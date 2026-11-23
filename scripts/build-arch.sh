@@ -166,6 +166,15 @@ docker exec \
       --shell /bin/bash \
       pgaegis-build
 
+    # The binary is prebuilt for the target arch. /etc/makepkg.conf hard-codes
+    # the HOST CARCH, which would override an environment CARCH; use a config
+    # that layers the target arch on top so .PKGINFO gets the right arch.
+    {
+      echo "source /etc/makepkg.conf"
+      echo "CARCH=${PGAEGIS_PACKAGE_ARCH}"
+      echo "CHOST=${PGAEGIS_PACKAGE_ARCH}-unknown-linux-gnu"
+    } > /build/makepkg-target.conf
+
     chown -R pgaegis-build:pgaegis-build /build
 
     runuser -u pgaegis-build -- \
@@ -178,7 +187,7 @@ docker exec \
         bash -lc "
           set -e
           cd /build
-          makepkg --force --noconfirm --nodeps
+          makepkg --config /build/makepkg-target.conf --force --noconfirm --nodeps
         "
   '
 
@@ -225,6 +234,12 @@ for metadata in .PKGINFO .BUILDINFO .MTREE .INSTALL; do
     exit 1
   fi
 done
+
+pkg_arch="$(tar --zstd -xOf "$EXPECTED" .PKGINFO | sed -n 's/^arch = //p')"
+if [[ "$pkg_arch" != "$ARCH" ]]; then
+  echo "invalid Arch package: .PKGINFO arch is '$pkg_arch', expected '$ARCH'" >&2
+  exit 1
+fi
 
 OUT="$ROOT/dist/pgaegis-${VERSION}-1-${ARCH}.pkg.tar.zst"
 cp -f "$EXPECTED" "$OUT"
