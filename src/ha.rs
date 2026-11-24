@@ -56,6 +56,12 @@ pub fn topology_failures(members:&[Member])->Vec<String>{
     if leaders!=1 { f.push(format!("expected exactly one leader, observed {leaders}")); }
     let unhealthy:Vec<&str>=members.iter().filter(|m|!m.is_healthy()).map(|m|m.name.as_str()).collect();
     if !unhealthy.is_empty() { f.push(format!("unhealthy Patroni member(s): {}",unhealthy.join(","))); }
+    // pgaegis production clusters run synchronous_mode(_strict): Patroni will
+    // only promote the designated sync standby, so without one automatic
+    // failover is silently blocked.
+    if leaders==1 && !members.iter().any(|m|m.role.to_ascii_lowercase().contains("sync standby")) {
+        f.push("no synchronous standby designated: automatic failover is blocked under synchronous_mode".into());
+    }
     f
 }
 
@@ -388,6 +394,8 @@ mod tests {
         assert!(topology_failures(&m).is_empty());
         let two=&m[..2];
         assert!(!topology_failures(two).is_empty(), "two members must fail the 3-member gate");
+        let mut no_sync=m.clone(); no_sync[1].role="Replica".into();
+        assert!(topology_failures(&no_sync).iter().any(|f|f.contains("no synchronous standby")));
         let mut bad=m.clone(); bad[2].state="stopped".into();
         assert!(topology_failures(&bad).iter().any(|f|f.contains("pg10")));
         let standby_leader=Member{name:"x".into(),host:"".into(),role:"Standby Leader".into(),state:"running".into(),tl:"".into(),lag:"".into()};

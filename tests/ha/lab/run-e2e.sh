@@ -289,6 +289,18 @@ psql_retry \
 initial_leader="$(leader_name || true)"
 [ -n "$initial_leader" ] || fail "no Patroni leader found before failover test"
 
+# With synchronous_mode_strict Patroni promotes ONLY the member recorded as
+# sync standby in the DCS (/sync key). Right after bootstrap Patroni runs with
+# synchronous_standby_names='*' (commits succeed) before it has recorded a sync
+# standby; killing the leader in that window correctly results in NO failover.
+# Wait until a sync standby is designated (REST /sync returns 200 on it).
+sync_wait_deadline=$(( $(date +%s) + 120 ))
+until sync_standby_name_except "$initial_leader" >/dev/null 2>&1; do
+  [ "$(date +%s)" -lt "$sync_wait_deadline" ] || { dump_routing_state; fail "no synchronous standby designated within 120s; automatic failover would be blocked"; }
+  sleep 2
+done
+echo "Sync standby designated: $(sync_standby_name_except "$initial_leader")"
+
 commit_log="$HERE/evidence/committed-write-ids.txt"
 : > "$commit_log"
 
