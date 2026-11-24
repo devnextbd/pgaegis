@@ -493,32 +493,60 @@ docker compose start etcd2 etcd3 "$dcs_leader"
 wait_cluster_ready
 wait_sql_stable
 
-current_leader="$(leader_name || true)"
-[ -n "$current_leader" ] || fail "no leader found before planned switchover"
-# With synchronous_mode(_strict) Patroni only allows switchover to the
-# synchronous standby (HTTP 412 otherwise). Patroni REST /sync returns 200
-# only on the sync standby; wait for one to be assigned after the DCS test.
+# Planned switchover.
+# Right after the DCS-quorum test etcd and a member were restarted; Patroni
+# only accepts a switchover once every member has re-published fresh status
+# (WAL position, sync state) to the DCS, otherwise it answers
+# "412 ... no good candidates have been found". Let the cluster settle for a
+# few HA loops (loop_wait=5s), then retry like an operator would.
+# Note: patronictl exits 0 even when the switchover is rejected, so success is
+# verified by checking who the leader is afterwards.
+sleep 15
+switched=0
 candidate=""
-for _ in $(seq 1 60); do
-  candidate="$(sync_standby_name_except "$current_leader" || true)"
-  [ -n "$candidate" ] && break
-  sleep 2
+for attempt in 1 2 3 4 5 6; do
+  current_leader="$(leader_name || true)"
+  [ -n "$current_leader" ] || { sleep 5; continue; }
+
+  # With synchronous_mode(_strict) Patroni only allows switchover to the
+  # synchronous standby; REST /sync returns 200 only on that member.
+  candidate=""
+  for _ in $(seq 1 30); do
+    candidate="$(sync_standby_name_except "$current_leader" || true)"
+    [ -n "$candidate" ] && break
+    sleep 2
+  done
+  [ -n "$candidate" ] || { echo "attempt $attempt: no synchronous standby yet" >&2; sleep 10; continue; }
+
+  echo "Switchover attempt $attempt: $current_leader -> $candidate"
+  docker compose exec -T "$candidate" \
+    /opt/patroni/bin/patronictl \
+    -c /etc/patroni/patroni.yml \
+    switchover pgaegis-lab \
+    --candidate "$candidate" \
+    --force || true
+
+  for _ in $(seq 1 30); do
+    if [ "$(leader_name || true)" = "$candidate" ]; then
+      switched=1
+      break
+    fi
+    sleep 2
+  done
+  [ "$switched" -eq 1 ] && break
+
+  echo "attempt $attempt: switchover not accepted yet; retrying in 15s" >&2
+  sleep 15
 done
-[ -n "$candidate" ] || { echo "No synchronous standby available for planned switchover" >&2; exit 1; }
 
-docker compose exec -T "$candidate" \
-  /opt/patroni/bin/patronictl \
-  -c /etc/patroni/patroni.yml \
-  switchover pgaegis-lab \
-  --candidate "$candidate" \
-  --force
-
-for _ in $(seq 1 60); do
-  [ "$(leader_name || true)" = "$candidate" ] && break
-  sleep 2
-done
-
-[ "$(leader_name || true)" = "$candidate" ] || fail "planned switchover did not make $candidate the leader"
+if [ "$switched" -ne 1 ]; then
+  echo "--- candidate ${candidate:-?} Patroni status ---" >&2
+  [ -n "$candidate" ] && docker compose exec -T "$candidate" \
+    curl -fsS http://127.0.0.1:8008/patroni >&2 2>/dev/null || true
+  echo >&2
+  dump_routing_state
+  fail "planned switchover did not make ${candidate:-the sync standby} the leader after 6 attempts"
+fi
 wait_sql_stable
 
 for n in pg1 pg2 pg3; do
