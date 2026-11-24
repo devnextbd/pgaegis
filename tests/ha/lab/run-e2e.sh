@@ -436,9 +436,31 @@ printf \
   > evidence/split-brain.env
 
 rewind_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# Re-attach WITH the compose service name as DNS alias. A plain
+# `docker network connect` drops the alias, so other members can no longer
+# resolve e.g. "pg3": replication still works (the node connects out), but the
+# leader cannot reach its REST API and Patroni rejects it as a switchover/
+# failover candidate ("412 ... no good candidates have been found").
 docker network connect \
+  --alias "$partitioned_leader" \
   "$net" \
-  "$(docker compose ps -q "$partitioned_leader")" || true
+  "$(docker compose ps -q "$partitioned_leader")"
+
+# Prove the member is reachable by name again from the other nodes.
+for n in pg1 pg2 pg3; do
+  [ "$n" = "$partitioned_leader" ] && continue
+  reachable=0
+  for _ in $(seq 1 30); do
+    if docker compose exec -T "$n" \
+      curl -fsS "http://${partitioned_leader}:8008/patroni" >/dev/null 2>&1
+    then
+      reachable=1
+      break
+    fi
+    sleep 1
+  done
+  [ "$reachable" -eq 1 ] || fail "$n cannot reach ${partitioned_leader}:8008 by name after network reconnect"
+done
 
 sleep 20
 wait_sql_stable
@@ -529,6 +551,13 @@ for attempt in 1 2 3 4 5 6; do
     sleep 2
   done
   [ -n "$candidate" ] || { echo "attempt $attempt: no synchronous standby yet" >&2; sleep 10; continue; }
+
+  # Patroni's leader must reach the candidate's REST API, or it answers 412.
+  if ! docker compose exec -T "$current_leader" \
+    curl -fsS "http://${candidate}:8008/patroni" >/dev/null 2>&1
+  then
+    echo "attempt $attempt: leader $current_leader cannot reach ${candidate}:8008 (Patroni would reject the switchover)" >&2
+  fi
 
   echo "Switchover attempt $attempt: $current_leader -> $candidate"
   docker compose exec -T "$candidate" \
